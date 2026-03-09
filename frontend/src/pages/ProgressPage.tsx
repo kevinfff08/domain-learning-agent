@@ -27,7 +27,7 @@ export default function ProgressPage() {
           navigate('/assess')
           return
         }
-        const p = await fetchProgress(assessment.field)
+        const p = await fetchProgress(assessment.target_field)
         setProgress(p)
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败')

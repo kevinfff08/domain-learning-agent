@@ -29,6 +29,7 @@ class LearningStyle(str, Enum):
     MATH_FIRST = "mathematical_first"
     CODE_FIRST = "code_first"
     INTUITION_FIRST = "intuition_first"
+    BALANCED = "balanced"
 
 
 class MathFoundations(BaseModel):

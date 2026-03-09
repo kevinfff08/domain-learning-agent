@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
+from src.logging_config import get_logger
+
 load_dotenv()
+
+logger = get_logger("llm.client")
 
 
 class LLMClient:
@@ -34,10 +39,13 @@ class LLMClient:
             self.base_url = base_url or os.environ.get(
                 "LLM_PROXY_URL", "http://localhost:8317"
             )
+            logger.info("LLMClient init: mode=setup-token, proxy=%s, model=%s", self.base_url, model)
         else:
             # Direct API key mode
             self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
             self.base_url = base_url
+            has_key = bool(self.api_key and self.api_key.startswith("sk-"))
+            logger.info("LLMClient init: mode=api-key, has_key=%s, model=%s", has_key, model)
 
     @property
     def client(self) -> Anthropic:
@@ -46,6 +54,7 @@ class LLMClient:
             if self.base_url:
                 kwargs["base_url"] = self.base_url
             self._client = Anthropic(**kwargs)
+            logger.debug("Anthropic client created (base_url=%s)", self.base_url or "default")
         return self._client
 
     def generate(
@@ -56,17 +65,33 @@ class LLMClient:
         max_tokens: int | None = None,
     ) -> str:
         """Generate text from a prompt."""
+        tokens = max_tokens or self.max_tokens
+        prompt_preview = prompt[:120].replace("\n", " ")
+        logger.info("LLM request: model=%s, max_tokens=%d, temp=%.1f, prompt=%s...", self.model, tokens, temperature, prompt_preview)
+
         kwargs: dict = {
             "model": self.model,
-            "max_tokens": max_tokens or self.max_tokens,
+            "max_tokens": tokens,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
         }
         if system:
             kwargs["system"] = system
 
-        response = self.client.messages.create(**kwargs)
-        return response.content[0].text
+        t0 = time.perf_counter()
+        try:
+            response = self.client.messages.create(**kwargs)
+            elapsed = time.perf_counter() - t0
+            usage = response.usage
+            logger.info(
+                "LLM response: %.1fs, input_tokens=%d, output_tokens=%d, stop=%s",
+                elapsed, usage.input_tokens, usage.output_tokens, response.stop_reason,
+            )
+            return response.content[0].text
+        except Exception as exc:
+            elapsed = time.perf_counter() - t0
+            logger.error("LLM request failed after %.1fs: %s", elapsed, exc)
+            raise
 
     def generate_json(
         self,

@@ -10,6 +10,12 @@ from dotenv import load_dotenv
 import typer
 
 load_dotenv()
+
+from src.logging_config import setup_logging, get_logger
+
+setup_logging()
+logger = get_logger("cli")
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table

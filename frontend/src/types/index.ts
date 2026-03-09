@@ -1,5 +1,5 @@
-// Assessment
-export interface AssessmentProfile {
+// Assessment - request shape (what we POST)
+export interface AssessmentRequest {
   field: string
   math_level: number
   programming_level: number
@@ -7,7 +7,20 @@ export interface AssessmentProfile {
   learning_goal: 'understand_concepts' | 'reproduce_papers' | 'improve_methods'
   available_hours: number
   learning_style: string
+}
+
+// Assessment - response shape (what the API returns)
+export interface AssessmentProfile {
+  target_field: string
+  learning_goal: string
+  available_hours_per_week: number
+  learning_style: string
+  math_foundations: Record<string, unknown>
+  programming: Record<string, unknown>
+  domain_knowledge: Record<string, number>
+  calibration_confidence: number
   created_at?: string
+  updated_at?: string
 }
 
 // Knowledge Graph

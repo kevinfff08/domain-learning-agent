@@ -15,7 +15,7 @@ export default function AssessmentPage() {
     'understand_concepts' | 'reproduce_papers' | 'improve_methods'
   >('understand_concepts')
   const [availableHours, setAvailableHours] = useState(10)
-  const [learningStyle, setLearningStyle] = useState('visual')
+  const [learningStyle, setLearningStyle] = useState('intuition_first')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -163,9 +163,9 @@ export default function AssessmentPage() {
             onChange={(e) => setLearningStyle(e.target.value)}
             className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           >
-            <option value="visual">视觉型 - 偏好图表和可视化</option>
-            <option value="theoretical">理论型 - 偏好数学推导</option>
-            <option value="practical">实践型 - 偏好代码和实验</option>
+            <option value="intuition_first">直觉优先 - 偏好类比和可视化</option>
+            <option value="mathematical_first">数学优先 - 偏好公式推导</option>
+            <option value="code_first">代码优先 - 偏好实现和实验</option>
             <option value="balanced">均衡型 - 三者兼顾</option>
           </select>
         </div>

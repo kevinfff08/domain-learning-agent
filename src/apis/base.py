@@ -10,6 +10,10 @@ from pathlib import Path
 
 import httpx
 
+from src.logging_config import get_logger
+
+logger = get_logger("apis.base")
+
 
 class RateLimiter:
     """Simple rate limiter using token bucket algorithm."""
@@ -108,12 +112,21 @@ class BaseAPIClient:
         if self.cache:
             cached = self.cache.get(url, params)
             if cached is not None:
+                logger.debug("Cache hit: %s", url)
                 return cached
 
         await self.rate_limiter.acquire()
         client = await self._get_client()
-        response = await client.get(path, params=params)
-        response.raise_for_status()
+        logger.debug("HTTP GET %s params=%s", url, params)
+        try:
+            response = await client.get(path, params=params)
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            logger.warning("HTTP %d from %s: %s", exc.response.status_code, url, exc.response.text[:200])
+            raise
+        except httpx.RequestError as exc:
+            logger.error("HTTP request error for %s: %s", url, exc)
+            raise
         data = response.json()
 
         if self.cache:

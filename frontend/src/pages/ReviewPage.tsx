@@ -14,7 +14,7 @@ export default function ReviewPage() {
     async function load() {
       try {
         const assessment = await fetchAssessment()
-        if (assessment) setField(assessment.field)
+        if (assessment) setField(assessment.target_field)
 
         const due = await fetchDueCards()
         setCards(due)

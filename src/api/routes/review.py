@@ -6,12 +6,24 @@ import json
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
+from pydantic import BaseModel
 
 from src.api.deps import get_orchestrator
 from src.models.cards import CardDeck
 from src.orchestrator import LearningOrchestrator
 
 router = APIRouter()
+
+
+class ReviewRequest(BaseModel):
+    """Review submission body."""
+    rating: int
+    concept_id: str
+
+
+class AnkiExportRequest(BaseModel):
+    """Anki export body."""
+    field: str
 
 
 @router.get("/review/due")
@@ -30,26 +42,25 @@ def get_due_cards(
 @router.post("/review/{card_id}")
 def review_card(
     card_id: str,
-    quality: int,
-    concept_id: str,
+    req: ReviewRequest,
     orch: LearningOrchestrator = Depends(get_orchestrator),
 ):
     """Submit a review rating for a flashcard.
 
-    quality: 0-5 (0-2 = wrong, 3 = hard, 4 = good, 5 = easy)
+    rating: 0-5 (0-2 = wrong, 3 = hard, 4 = good, 5 = easy)
     """
-    deck = orch.store.load_content(concept_id, "cards.json", CardDeck)
+    deck = orch.store.load_content(req.concept_id, "cards.json", CardDeck)
     if not deck:
-        return {"error": f"No cards found for concept '{concept_id}'."}
+        return {"error": f"No cards found for concept '{req.concept_id}'."}
 
     card = next((c for c in deck.cards if c.id == card_id), None)
     if not card:
         return {"error": f"Card '{card_id}' not found."}
 
-    card = orch.spaced_rep.review_card(card, quality)
+    card = orch.spaced_rep.review_card(card, req.rating)
 
     # Save updated deck
-    orch.store.save_content(concept_id, "cards.json", deck)
+    orch.store.save_content(req.concept_id, "cards.json", deck)
 
     return {
         "card_id": card.id,
@@ -62,11 +73,11 @@ def review_card(
 
 @router.post("/review/export/anki")
 def export_anki(
-    field: str,
+    req: AnkiExportRequest,
     orch: LearningOrchestrator = Depends(get_orchestrator),
 ):
     """Export all flashcards as Anki .apkg file."""
-    path = orch.spaced_rep.export_anki(field)
+    path = orch.spaced_rep.export_anki(req.field)
     return FileResponse(
         path=str(path),
         filename=path.name,

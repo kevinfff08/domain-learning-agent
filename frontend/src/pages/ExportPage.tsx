@@ -39,7 +39,7 @@ export default function ExportPage() {
         navigate('/assess')
         return
       }
-      setField(a.field)
+      setField(a.target_field)
     })
   }, [navigate])
 

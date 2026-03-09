@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
+from src.logging_config import setup_logging, get_logger
+
+setup_logging()
+logger = get_logger("api")
 
 from src.api.routes import assessment, graph, learning, quiz, review, progress, export
 
@@ -16,7 +23,11 @@ from src.api.routes import assessment, graph, learning, quiz, review, progress, 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application startup/shutdown."""
+    llm_mode = os.environ.get("LLM_MODE", "api-key")
+    llm_model = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
+    logger.info("FastAPI server starting — LLM_MODE=%s, LLM_MODEL=%s", llm_mode, llm_model)
     yield
+    logger.info("FastAPI server shutting down")
 
 
 app = FastAPI(

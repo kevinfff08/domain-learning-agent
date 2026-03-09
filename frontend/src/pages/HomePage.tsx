@@ -4,11 +4,13 @@ import { fetchStatus } from '../api/client'
 
 interface StatusData {
   has_assessment: boolean
-  field?: string
+  target_field?: string
   completion_rate?: number
   due_reviews?: number
   total_concepts?: number
   completed_concepts?: number
+  llm_mode?: string
+  llm_ready?: boolean
 }
 
 export default function HomePage() {
@@ -100,7 +102,7 @@ function DashboardView({ status }: { status: StatusData }) {
     <div className="max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold text-slate-800 mb-1">学习面板</h1>
       <p className="text-sm text-slate-400 mb-6">
-        当前领域: {status.field}
+        当前领域: {status.target_field}
       </p>
 
       {/* Stats cards */}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 from rich.console import Console
@@ -32,8 +33,10 @@ from src.skills.quiz_engine import QuizEngine
 from src.skills.resource_curator import ResourceCurator
 from src.skills.spaced_repetition import SpacedRepetitionManager
 from src.storage.local_store import LocalStore
+from src.logging_config import get_logger
 
 console = Console()
+logger = get_logger("orchestrator")
 
 
 class LearningOrchestrator:
@@ -48,6 +51,7 @@ class LearningOrchestrator:
         llm_model: str = "claude-sonnet-4-20250514",
     ):
         self.store = LocalStore(data_dir)
+        logger.info("Orchestrator init: data_dir=%s, model=%s", data_dir, llm_model)
         self.llm = LLMClient(api_key=api_key, model=llm_model)
 
         # API clients
@@ -94,6 +98,7 @@ class LearningOrchestrator:
         learning_style: str = "intuition_first",
     ) -> AssessmentProfile:
         """Phase 1: Run user assessment."""
+        logger.info("Phase 1: Assessment — field=%s, quick=%s, goal=%s, style=%s", field, quick, learning_goal, learning_style)
         console.print(Panel(f"[bold]Phase 1: Assessment for '{field}'[/bold]"))
 
         goal = LearningGoal(learning_goal)
@@ -117,11 +122,23 @@ class LearningOrchestrator:
 
         return profile
 
-    async def build_knowledge_graph(self, profile: AssessmentProfile) -> KnowledgeGraph:
-        """Phase 2: Build knowledge graph."""
+    async def build_knowledge_graph(
+        self,
+        profile: AssessmentProfile,
+        on_progress: Callable[[str, str], None] | None = None,
+    ) -> KnowledgeGraph:
+        """Phase 2: Build knowledge graph.
+
+        Args:
+            profile: Assessment profile.
+            on_progress: Optional ``(step_id, message)`` callback for live
+                progress updates (used by SSE route).
+        """
+        logger.info("Phase 2: Building knowledge graph for '%s'", profile.target_field)
         console.print(Panel(f"[bold]Phase 2: Building Knowledge Graph for '{profile.target_field}'[/bold]"))
 
-        graph = await self.mapper.build_graph(profile)
+        graph = await self.mapper.build_graph(profile, on_progress=on_progress)
+        logger.info("Knowledge graph built: %d concepts, %d edges", len(graph.nodes), len(graph.edges))
         console.print(f"[green]Knowledge graph built: {len(graph.nodes)} concepts, "
                       f"{len(graph.edges)} edges[/green]")
 
@@ -145,18 +162,22 @@ class LearningOrchestrator:
         """Phase 3: Learn a single concept (main concept loop iteration)."""
         concept = graph.get_node(concept_id)
         if not concept:
+            logger.warning("Concept '%s' not found in graph", concept_id)
             return {"error": f"Concept '{concept_id}' not found"}
 
         progress = self.tracker.get_or_create_progress(graph.field)
         self.tracker.start_concept(progress, concept_id)
 
+        logger.info("Phase 3: Learning concept '%s' (%s)", concept_id, concept.name)
         console.print(Panel(f"[bold]Learning: {concept.name}[/bold]"))
 
         # Step 1: Deep Research
+        logger.info("  Step 1/5: Deep research for '%s'", concept_id)
         console.print("  [1/5] Generating content...")
         synthesis = self.researcher.synthesize(concept, graph, profile)
 
         # Step 2: Accuracy Verification
+        logger.info("  Step 2/5: Accuracy verification for '%s'", concept_id)
         console.print("  [2/5] Verifying accuracy...")
         report = await self.verifier.verify(synthesis)
         if report.needs_human_review:
@@ -164,17 +185,20 @@ class LearningOrchestrator:
                          f"Flagged items: {len(report.flagged_items)}[/yellow]")
 
         # Step 3: Resource Curation
+        logger.info("  Step 3/5: Resource curation for '%s'", concept_id)
         console.print("  [3/5] Curating resources...")
         resources = await self.curator.curate(concept, profile)
         console.print(f"  Found {resources.total_resources} resources")
 
         # Step 4: Generate Quiz
+        logger.info("  Step 4/5: Quiz generation for '%s'", concept_id)
         console.print("  [4/5] Generating quiz...")
         prev_scores = progress.concepts.get(concept_id, None)
         prev = prev_scores.quiz_scores if prev_scores else None
         quiz = self.quiz_engine.generate_quiz(synthesis, profile, prev)
 
         # Step 5: Generate practice materials
+        logger.info("  Step 5/5: Practice materials for '%s'", concept_id)
         console.print("  [5/5] Generating practice materials...")
         if profile.learning_goal == LearningGoal.REPRODUCE:
             self.practice.generate_reproduction_guide(synthesis)

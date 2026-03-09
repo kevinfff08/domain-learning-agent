@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
 
 from src.apis.arxiv_client import ArxivClient
 from src.apis.semantic_scholar import SemanticScholarClient
 from src.apis.open_alex import OpenAlexClient
 from src.llm.client import LLMClient
+from src.logging_config import get_logger
 from src.models.assessment import AssessmentProfile
 from src.models.knowledge_graph import (
     ConceptNode,
@@ -20,6 +24,8 @@ from src.models.knowledge_graph import (
     PaperReference,
 )
 from src.storage.local_store import LocalStore
+
+logger = get_logger("skills.domain_mapper")
 
 SYSTEM_PROMPT = """You are an expert AI research curriculum designer.
 Your task is to create comprehensive, PhD-level knowledge graphs for AI research domains.
@@ -139,25 +145,109 @@ class DomainMapper:
 
         return papers
 
-    async def build_graph(self, profile: AssessmentProfile) -> KnowledgeGraph:
-        """Build a knowledge graph for the target field based on user profile."""
+    @staticmethod
+    def _repair_json(raw: str) -> dict:
+        """Attempt multiple strategies to parse LLM-generated JSON.
+
+        LLMs often return slightly malformed JSON (trailing commas, markdown
+        fences, truncated output).  This helper tries progressively more
+        aggressive repair strategies.
+        """
+        # 1. Strip markdown fences (```json ... ```)
+        text = raw.strip()
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
+        text = text.strip()
+
+        # 2. Try direct parse
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 3. Extract outermost { ... } block
+        start = text.find("{")
+        end = text.rfind("}") + 1
+        if start < 0 or end <= start:
+            raise ValueError(f"No JSON object found in LLM response: {raw[:300]}")
+        text = text[start:end]
+
+        # 4. Try parse the extracted block
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 5. Fix common issues: trailing commas before } or ]
+        fixed = re.sub(r",\s*([}\]])", r"\1", text)
+        try:
+            return json.loads(fixed)
+        except json.JSONDecodeError:
+            pass
+
+        # 6. Truncated JSON — try closing open brackets/braces
+        balanced = fixed
+        open_braces = balanced.count("{") - balanced.count("}")
+        open_brackets = balanced.count("[") - balanced.count("]")
+        if open_braces > 0 or open_brackets > 0:
+            balanced += "]" * max(open_brackets, 0)
+            balanced += "}" * max(open_braces, 0)
+            try:
+                return json.loads(balanced)
+            except json.JSONDecodeError:
+                pass
+
+        # 7. Last resort: truncate to last valid } and retry
+        for i in range(len(fixed) - 1, 0, -1):
+            if fixed[i] == "}":
+                try:
+                    return json.loads(fixed[: i + 1])
+                except json.JSONDecodeError:
+                    continue
+
+        raise ValueError(f"Failed to parse LLM JSON after all repair attempts. First 500 chars: {raw[:500]}")
+
+    async def build_graph(
+        self,
+        profile: AssessmentProfile,
+        on_progress: Callable[[str, str], None] | None = None,
+    ) -> KnowledgeGraph:
+        """Build a knowledge graph for the target field based on user profile.
+
+        Args:
+            profile: The assessment profile.
+            on_progress: Optional callback ``(step_id, message)`` called at
+                each sub-step so callers (e.g. SSE route) can relay live
+                progress to the frontend.
+        """
         field = profile.target_field
 
-        # Gather survey and key paper information
-        surveys = await self._search_surveys(field)
-        key_papers = await self._search_key_papers(field)
+        def _emit(step: str, msg: str) -> None:
+            logger.info("graph_build [%s] %s", step, msg)
+            if on_progress:
+                on_progress(step, msg)
 
-        # Format survey info for LLM
+        # --- Step 1: Search surveys ---
+        _emit("search_surveys", f"正在搜索 '{field}' 领域综述论文…")
+        surveys = await self._search_surveys(field)
+        _emit("search_surveys_done", f"找到 {len(surveys)} 篇综述论文")
+
+        # --- Step 2: Search key papers ---
+        _emit("search_papers", f"正在搜索 '{field}' 高引论文…")
+        key_papers = await self._search_key_papers(field)
+        _emit("search_papers_done", f"找到 {len(key_papers)} 篇关键论文")
+
+        # --- Step 3: Format survey info for LLM ---
         survey_info = []
         for s in surveys[:5]:
             title = s.get("title", "Unknown")
-            abstract = s.get("abstract", s.get("summary", ""))[:300]
+            abstract = (s.get("abstract") or s.get("summary") or "")[:300]
             citations = s.get("citationCount", s.get("citation_count", "N/A"))
             survey_info.append(f"- {title} (citations: {citations})\n  {abstract}")
 
         for p in key_papers[:5]:
             title = p.get("title", "Unknown")
-            abstract = p.get("abstract", p.get("summary", ""))[:200]
+            abstract = (p.get("abstract") or p.get("summary") or "")[:200]
             citations = p.get("citationCount", p.get("citation_count", "N/A"))
             survey_info.append(f"- [Key Paper] {title} (citations: {citations})\n  {abstract}")
 
@@ -186,19 +276,17 @@ class DomainMapper:
             learning_goal=profile.learning_goal.value,
         )
 
+        # --- Step 4: LLM generates graph ---
+        _emit("llm_generate", "正在通过 LLM 生成知识图谱结构…（这一步耗时较长）")
         response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT, temperature=0.3)
+        _emit("llm_generate_done", "LLM 响应完成，正在解析…")
 
-        try:
-            graph_data = json.loads(response)
-        except json.JSONDecodeError:
-            start = response.find("{")
-            end = response.rfind("}") + 1
-            if start >= 0 and end > start:
-                graph_data = json.loads(response[start:end])
-            else:
-                raise ValueError(f"Failed to parse knowledge graph response: {response[:200]}")
+        # --- Step 5: Parse JSON (with repair) ---
+        _emit("parse_json", "正在解析知识图谱 JSON 数据…")
+        graph_data = self._repair_json(response)
 
-        # Build knowledge graph
+        # --- Step 6: Build knowledge graph objects ---
+        _emit("build_graph", "正在构建知识图谱对象…")
         nodes = []
         for n in graph_data.get("nodes", []):
             node = ConceptNode(
@@ -215,13 +303,16 @@ class DomainMapper:
 
         edges = []
         for e in graph_data.get("edges", []):
-            edge = GraphEdge(
-                source=e["source"],
-                target=e["target"],
-                edge_type=EdgeType(e.get("edge_type", "prerequisite")),
-                label=e.get("label", ""),
-            )
-            edges.append(edge)
+            try:
+                edge = GraphEdge(
+                    source=e["source"],
+                    target=e["target"],
+                    edge_type=EdgeType(e.get("edge_type", "prerequisite")),
+                    label=e.get("label", ""),
+                )
+                edges.append(edge)
+            except (ValueError, KeyError) as exc:
+                logger.warning("Skipping invalid edge %s: %s", e, exc)
 
         # Build learning path
         learning_path = graph_data.get("learning_path", [n.id for n in nodes])
@@ -247,6 +338,7 @@ class DomainMapper:
             sources_searched=["arxiv", "semantic_scholar", "openalex"],
             survey_papers_used=[r.title for r in paper_refs if r.role == "survey"],
         )
+        _emit("build_graph_done", f"图谱构建完成：{len(nodes)} 个概念，{len(edges)} 条边")
 
         # Save graph
         self.store.save_knowledge_graph(field, graph)

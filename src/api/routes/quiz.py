@@ -7,6 +7,7 @@ from io import StringIO
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
 
 from src.api.deps import get_orchestrator
 from src.models.assessment import AssessmentProfile
@@ -15,6 +16,12 @@ from src.models.quiz import Quiz, QuizResult
 from src.orchestrator import LearningOrchestrator
 
 router = APIRouter()
+
+
+class QuizSubmitRequest(BaseModel):
+    """Quiz submission body."""
+    answers: dict[str, str]
+    field: str = ""
 
 
 @router.get("/quiz/{concept_id}")
@@ -32,8 +39,7 @@ def get_quiz(
 @router.post("/quiz/{concept_id}/submit")
 async def submit_quiz(
     concept_id: str,
-    answers: dict[str, str],
-    field: str = "",
+    req: QuizSubmitRequest,
     orch: LearningOrchestrator = Depends(get_orchestrator),
 ):
     """Submit quiz answers and get results with adaptive feedback."""
@@ -41,12 +47,12 @@ async def submit_quiz(
     if not profile:
         return {"error": "No assessment found."}
 
-    field_name = field or profile.target_field
+    field_name = req.field or profile.target_field
     graph = orch.store.load_knowledge_graph(field_name, KnowledgeGraph)
     if not graph:
         return {"error": "No knowledge graph found."}
 
-    result = await orch.process_quiz_result(concept_id, graph, profile, answers)
+    result = await orch.process_quiz_result(concept_id, graph, profile, req.answers)
     return result
 
 

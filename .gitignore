@@ -49,6 +49,7 @@ coverage.xml
 *.tar.gz
 
 # Logs
+logs/
 *.log
 
 # Cache

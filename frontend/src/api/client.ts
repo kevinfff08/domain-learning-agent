@@ -1,4 +1,5 @@
 import type {
+  AssessmentRequest,
   AssessmentProfile,
   KnowledgeGraph,
   ResearchSynthesis,
@@ -36,7 +37,7 @@ export async function fetchAssessment(): Promise<AssessmentProfile | null> {
 }
 
 export async function createAssessment(
-  profile: Omit<AssessmentProfile, 'created_at'>
+  profile: AssessmentRequest
 ): Promise<AssessmentProfile> {
   return request<AssessmentProfile>('/assessment', {
     method: 'POST',
@@ -69,28 +70,39 @@ export function buildGraph(
   const url = `${BASE}/graph/${encodeURIComponent(field)}/build`
   const evtSource = new EventSource(url)
 
+  // Named events from backend
+  const namedEvents = ['step_progress', 'step_start', 'complete', 'error']
+  for (const evtName of namedEvents) {
+    evtSource.addEventListener(evtName, (e) => {
+      try {
+        const data = JSON.parse((e as MessageEvent).data)
+        onEvent({ event: evtName, data })
+      } catch {
+        onEvent({ event: evtName, data: { raw: (e as MessageEvent).data } })
+      }
+      if (evtName === 'complete') {
+        evtSource.close()
+        onDone?.()
+      }
+      if (evtName === 'error') {
+        evtSource.close()
+        onError?.(new Error(
+          (JSON.parse((e as MessageEvent).data) as { message?: string }).message
+            ?? 'Graph build stream failed'
+        ))
+      }
+    })
+  }
+
+  // Fallback for unnamed events
   evtSource.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data)
-      onEvent({ event: e.type, data })
+      onEvent({ event: 'message', data })
     } catch {
-      onEvent({ event: e.type, data: { raw: e.data } })
+      onEvent({ event: 'message', data: { raw: e.data } })
     }
   }
-
-  evtSource.addEventListener('complete', (e) => {
-    try {
-      const data = JSON.parse((e as MessageEvent).data)
-      onEvent({ event: 'complete', data })
-    } catch { /* ignore */ }
-    evtSource.close()
-    onDone?.()
-  })
-
-  evtSource.addEventListener('error', () => {
-    evtSource.close()
-    onError?.(new Error('Graph build stream failed'))
-  })
 
   evtSource.onerror = () => {
     evtSource.close()

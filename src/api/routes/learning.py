@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from sse_starlette.sse import EventSourceResponse
 
 from src.api.deps import get_orchestrator
+from src.logging_config import get_logger
 from src.models.assessment import AssessmentProfile
 from src.models.content import ResearchSynthesis
 from src.models.knowledge_graph import KnowledgeGraph
@@ -16,6 +17,7 @@ from src.models.resources import ResourceCollection
 from src.models.verification import VerificationReport
 from src.orchestrator import LearningOrchestrator
 
+logger = get_logger("api.learning")
 router = APIRouter()
 
 
@@ -29,17 +31,21 @@ async def learn_concept_stream(
 
     Each step emits start/complete events so the frontend can render progressively.
     """
+    logger.info("GET /learn/%s/stream — starting 5-step learning", concept_id)
     profile = orch.store.load_assessment(AssessmentProfile)
     if not profile:
+        logger.warning("Learn stream aborted: no assessment")
         return {"error": "No assessment found."}
 
     field_name = field or profile.target_field
     graph = orch.store.load_knowledge_graph(field_name, KnowledgeGraph)
     if not graph:
+        logger.warning("Learn stream aborted: no graph for '%s'", field_name)
         return {"error": "No knowledge graph found."}
 
     concept = graph.get_node(concept_id)
     if not concept:
+        logger.warning("Learn stream aborted: concept '%s' not found", concept_id)
         return {"error": f"Concept '{concept_id}' not found."}
 
     async def event_generator():

@@ -2,58 +2,46 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from src.api.deps import get_orchestrator
+from src.logging_config import get_logger
 from src.models.assessment import AssessmentProfile, LearningGoal, LearningStyle
 from src.orchestrator import LearningOrchestrator
 
+logger = get_logger("api.assessment")
 router = APIRouter()
 
 
-class AssessmentRequest:
-    """Assessment form data."""
+class AssessmentRequest(BaseModel):
+    """Assessment form data (JSON body)."""
 
-    def __init__(
-        self,
-        field: str,
-        math_level: int = 3,
-        programming_level: int = 3,
-        domain_level: int = 0,
-        learning_goal: str = "understand_concepts",
-        available_hours: float = 10.0,
-        learning_style: str = "intuition_first",
-    ):
-        self.field = field
-        self.math_level = math_level
-        self.programming_level = programming_level
-        self.domain_level = domain_level
-        self.learning_goal = learning_goal
-        self.available_hours = available_hours
-        self.learning_style = learning_style
+    field: str
+    math_level: int = 3
+    programming_level: int = 3
+    domain_level: int = 0
+    learning_goal: str = "understand_concepts"
+    available_hours: float = 10.0
+    learning_style: str = "intuition_first"
 
 
 @router.post("/assessment")
 async def create_assessment(
-    field: str,
-    math_level: int = 3,
-    programming_level: int = 3,
-    domain_level: int = 0,
-    learning_goal: str = "understand_concepts",
-    available_hours: float = 10.0,
-    learning_style: str = "intuition_first",
+    req: AssessmentRequest,
     orch: LearningOrchestrator = Depends(get_orchestrator),
 ):
     """Create or update learner assessment profile."""
+    logger.info("POST /assessment — field=%s, goal=%s, style=%s", req.field, req.learning_goal, req.learning_style)
     profile = await orch.run_assessment(
-        field=field,
+        field=req.field,
         quick=True,
-        math_level=math_level,
-        programming_level=programming_level,
-        domain_level=domain_level,
-        learning_goal=learning_goal,
-        available_hours=available_hours,
-        learning_style=learning_style,
+        math_level=req.math_level,
+        programming_level=req.programming_level,
+        domain_level=req.domain_level,
+        learning_goal=req.learning_goal,
+        available_hours=req.available_hours,
+        learning_style=req.learning_style,
     )
     return profile.model_dump()
 
@@ -65,5 +53,5 @@ def get_assessment(
     """Get current assessment profile."""
     profile = orch.store.load_assessment(AssessmentProfile)
     if not profile:
-        return {"error": "No assessment found. Create one first."}
+        raise HTTPException(status_code=404, detail="No assessment found.")
     return profile.model_dump()
