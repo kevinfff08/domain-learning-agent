@@ -59,15 +59,14 @@ def review_card(
 
     card = orch.spaced_rep.review_card(card, req.rating)
 
-    # Save updated deck
-    orch.store.save_content(req.concept_id, "cards.json", deck)
+    # review_card already persists the deck internally
 
     return {
         "card_id": card.id,
-        "next_review": str(card.sm2.next_review),
-        "interval_days": card.sm2.interval,
-        "easiness": card.sm2.easiness,
-        "repetition": card.sm2.repetition,
+        "next_review": str(card.fsrs_state.due),
+        "stability": card.fsrs_state.stability,
+        "difficulty": card.fsrs_state.difficulty,
+        "state": card.fsrs_state.state,
     }
 
 

@@ -14,6 +14,7 @@ from src.apis.semantic_scholar import SemanticScholarClient
 from src.apis.open_alex import OpenAlexClient
 from src.llm.client import LLMClient
 from src.logging_config import get_logger
+from src.utils.json_repair import repair_json, repair_json_array
 from src.models.assessment import AssessmentProfile
 from src.models.knowledge_graph import (
     ConceptNode,
@@ -145,74 +146,14 @@ class DomainMapper:
 
         return papers
 
-    @staticmethod
-    def _repair_json(raw: str) -> dict:
-        """Attempt multiple strategies to parse LLM-generated JSON.
-
-        LLMs often return slightly malformed JSON (trailing commas, markdown
-        fences, truncated output).  This helper tries progressively more
-        aggressive repair strategies.
-        """
-        # 1. Strip markdown fences (```json ... ```)
-        text = raw.strip()
-        text = re.sub(r"^```(?:json)?\s*", "", text)
-        text = re.sub(r"\s*```$", "", text)
-        text = text.strip()
-
-        # 2. Try direct parse
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # 3. Extract outermost { ... } block
-        start = text.find("{")
-        end = text.rfind("}") + 1
-        if start < 0 or end <= start:
-            raise ValueError(f"No JSON object found in LLM response: {raw[:300]}")
-        text = text[start:end]
-
-        # 4. Try parse the extracted block
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-
-        # 5. Fix common issues: trailing commas before } or ]
-        fixed = re.sub(r",\s*([}\]])", r"\1", text)
-        try:
-            return json.loads(fixed)
-        except json.JSONDecodeError:
-            pass
-
-        # 6. Truncated JSON — try closing open brackets/braces
-        balanced = fixed
-        open_braces = balanced.count("{") - balanced.count("}")
-        open_brackets = balanced.count("[") - balanced.count("]")
-        if open_braces > 0 or open_brackets > 0:
-            balanced += "]" * max(open_brackets, 0)
-            balanced += "}" * max(open_braces, 0)
-            try:
-                return json.loads(balanced)
-            except json.JSONDecodeError:
-                pass
-
-        # 7. Last resort: truncate to last valid } and retry
-        for i in range(len(fixed) - 1, 0, -1):
-            if fixed[i] == "}":
-                try:
-                    return json.loads(fixed[: i + 1])
-                except json.JSONDecodeError:
-                    continue
-
-        raise ValueError(f"Failed to parse LLM JSON after all repair attempts. First 500 chars: {raw[:500]}")
-
     async def build_graph(
         self,
         profile: AssessmentProfile,
         on_progress: Callable[[str, str], None] | None = None,
     ) -> KnowledgeGraph:
         """Build a knowledge graph for the target field based on user profile.
+
+        Uses incremental 4-phase LLM generation to reduce truncation risk.
 
         Args:
             profile: The assessment profile.
@@ -237,72 +178,82 @@ class DomainMapper:
         key_papers = await self._search_key_papers(field)
         _emit("search_papers_done", f"找到 {len(key_papers)} 篇关键论文")
 
-        # --- Step 3: Format survey info for LLM ---
+        # Format survey info
         survey_info = []
         for s in surveys[:5]:
             title = s.get("title", "Unknown")
             abstract = (s.get("abstract") or s.get("summary") or "")[:300]
             citations = s.get("citationCount", s.get("citation_count", "N/A"))
             survey_info.append(f"- {title} (citations: {citations})\n  {abstract}")
-
         for p in key_papers[:5]:
             title = p.get("title", "Unknown")
             abstract = (p.get("abstract") or p.get("summary") or "")[:200]
             citations = p.get("citationCount", p.get("citation_count", "N/A"))
             survey_info.append(f"- [Key Paper] {title} (citations: {citations})\n  {abstract}")
 
-        # Calculate average levels for prompt
-        math_level = round(
-            sum([
-                profile.math_foundations.linear_algebra.level,
-                profile.math_foundations.probability.level,
-                profile.math_foundations.calculus.level,
-                profile.math_foundations.optimization.level,
-            ]) / 4
-        )
-        prog_level = round(
-            sum([
-                profile.programming.python.level,
-                profile.programming.pytorch.level,
-            ]) / 2
-        )
+        survey_text = "\n".join(survey_info) if survey_info else "No surveys found - use your expertise"
 
-        prompt = CONCEPT_EXTRACTION_PROMPT.format(
-            field=field,
-            survey_info="\n".join(survey_info) if survey_info else "No surveys found - use your expertise",
-            math_level=math_level,
-            prog_level=prog_level,
-            domain_level=json.dumps(profile.domain_knowledge),
-            learning_goal=profile.learning_goal.value,
-        )
+        # Calculate average levels
+        math_level = round(sum([
+            profile.math_foundations.linear_algebra.level,
+            profile.math_foundations.probability.level,
+            profile.math_foundations.calculus.level,
+            profile.math_foundations.optimization.level,
+        ]) / 4)
+        prog_level = round(sum([
+            profile.programming.python.level,
+            profile.programming.pytorch.level,
+        ]) / 2)
 
-        # --- Step 4: LLM generates graph ---
-        _emit("llm_generate", "正在通过 LLM 生成知识图谱结构…（这一步耗时较长）")
-        response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT, temperature=0.3)
-        _emit("llm_generate_done", "LLM 响应完成，正在解析…")
+        # --- Phase 1: Generate categories ---
+        _emit("generate_categories", "正在生成概念类别…")
+        categories = self._generate_categories(field, survey_text, math_level, prog_level, profile)
+        _emit("generate_categories_done", f"生成了 {len(categories)} 个概念类别")
 
-        # --- Step 5: Parse JSON (with repair) ---
-        _emit("parse_json", "正在解析知识图谱 JSON 数据…")
-        graph_data = self._repair_json(response)
+        # --- Phase 2: Generate nodes per category ---
+        _emit("generate_nodes", "正在逐类生成概念节点…")
+        all_nodes_data: list[dict] = []
+        for cat in categories:
+            cat_name = cat.get("name", "")
+            cat_concepts = cat.get("concepts", [])
+            nodes_data = self._generate_nodes_for_category(
+                field, cat_name, cat_concepts, math_level, prog_level
+            )
+            all_nodes_data.extend(nodes_data)
+        _emit("generate_nodes_done", f"生成了 {len(all_nodes_data)} 个概念节点")
 
-        # --- Step 6: Build knowledge graph objects ---
+        # --- Phase 3: Generate edges ---
+        _emit("generate_edges", "正在生成概念间关系…")
+        node_ids = [n.get("id", "") for n in all_nodes_data]
+        edges_data = self._generate_edges(field, all_nodes_data)
+        _emit("generate_edges_done", f"生成了 {len(edges_data)} 条边")
+
+        # --- Phase 4: Generate learning path ---
+        _emit("generate_path", "正在生成学习路径…")
+        learning_path = self._generate_learning_path(field, all_nodes_data, edges_data)
+        _emit("generate_path_done", "学习路径生成完成")
+
+        # --- Build graph objects ---
         _emit("build_graph", "正在构建知识图谱对象…")
         nodes = []
-        for n in graph_data.get("nodes", []):
-            node = ConceptNode(
-                id=n["id"],
-                name=n.get("name", n["id"]),
-                description=n.get("description", ""),
-                difficulty=n.get("difficulty", 3),
-                prerequisites=n.get("prerequisites", []),
-                estimated_hours=n.get("estimated_hours", 2.0),
-                math_requirements=n.get("math_requirements", []),
-                tags=n.get("tags", []),
-            )
-            nodes.append(node)
+        for n in all_nodes_data:
+            try:
+                node = ConceptNode(
+                    id=n["id"],
+                    name=n.get("name", n["id"]),
+                    description=n.get("description", ""),
+                    difficulty=n.get("difficulty", 3),
+                    prerequisites=n.get("prerequisites", []),
+                    estimated_hours=n.get("estimated_hours", 2.0),
+                    math_requirements=n.get("math_requirements", []),
+                    tags=n.get("tags", []),
+                )
+                nodes.append(node)
+            except Exception as exc:
+                logger.warning("Skipping invalid node %s: %s", n.get("id"), exc)
 
         edges = []
-        for e in graph_data.get("edges", []):
+        for e in edges_data:
             try:
                 edge = GraphEdge(
                     source=e["source"],
@@ -314,10 +265,10 @@ class DomainMapper:
             except (ValueError, KeyError) as exc:
                 logger.warning("Skipping invalid edge %s: %s", e, exc)
 
-        # Build learning path
-        learning_path = graph_data.get("learning_path", [n.id for n in nodes])
+        # Validate and fix learning path topologically
+        learning_path = self._validate_and_fix_learning_path(nodes, edges, learning_path)
 
-        # Add paper references to nodes
+        # Add paper references
         paper_refs = []
         for p in (surveys + key_papers):
             if self.s2:
@@ -334,15 +285,190 @@ class DomainMapper:
             nodes=nodes,
             edges=edges,
             learning_path=learning_path,
-            estimated_total_hours=graph_data.get("estimated_total_hours", sum(n.estimated_hours for n in nodes)),
+            estimated_total_hours=sum(n.estimated_hours for n in nodes),
             sources_searched=["arxiv", "semantic_scholar", "openalex"],
             survey_papers_used=[r.title for r in paper_refs if r.role == "survey"],
         )
         _emit("build_graph_done", f"图谱构建完成：{len(nodes)} 个概念，{len(edges)} 条边")
 
-        # Save graph
         self.store.save_knowledge_graph(field, graph)
         return graph
+
+    def _generate_categories(
+        self, field: str, survey_text: str, math_level: int, prog_level: int,
+        profile: AssessmentProfile,
+    ) -> list[dict]:
+        """Phase 1: Generate 5-8 concept categories."""
+        prompt = f"""For the field "{field}", generate 5-8 concept categories for a PhD-level learning plan.
+
+Survey papers:
+{survey_text}
+
+Student math level: {math_level}/5, programming: {prog_level}/5
+Learning goal: {profile.learning_goal.value}
+
+Return JSON array:
+[
+  {{
+    "name": "Category Name",
+    "description": "What this category covers",
+    "concepts": ["concept_1_name", "concept_2_name", "concept_3_name"]
+  }}
+]
+
+Each category should have 3-6 concept names. Cover: foundations, core methods, advanced topics, practical skills."""
+
+        response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT, temperature=0.3)
+        try:
+            return repair_json_array(response)
+        except ValueError:
+            return [{"name": field, "concepts": [field], "description": "Main concepts"}]
+
+    def _generate_nodes_for_category(
+        self, field: str, category: str, concepts: list[str],
+        math_level: int, prog_level: int,
+    ) -> list[dict]:
+        """Phase 2: Generate detailed nodes for a single category."""
+        prompt = f"""For the field "{field}", category "{category}", define these concepts in detail:
+{chr(10).join(f'- {c}' for c in concepts)}
+
+Return JSON array:
+[
+  {{
+    "id": "concept_id_snake_case",
+    "name": "Human Readable Name",
+    "description": "One sentence description",
+    "difficulty": 1-5,
+    "prerequisites": ["other_concept_ids"],
+    "estimated_hours": 1.0-8.0,
+    "math_requirements": [],
+    "tags": ["category_tag"]
+  }}
+]
+
+Rules:
+- IDs must be unique snake_case
+- Only reference prerequisites from known concept names in this field
+- Student math level: {math_level}/5, programming: {prog_level}/5"""
+
+        response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT, temperature=0.3)
+        try:
+            return repair_json_array(response)
+        except ValueError:
+            return [{"id": c.lower().replace(" ", "_"), "name": c, "difficulty": 3} for c in concepts]
+
+    def _generate_edges(self, field: str, nodes_data: list[dict]) -> list[dict]:
+        """Phase 3: Generate edges between all nodes."""
+        node_summary = "\n".join(
+            f"- {n.get('id')}: {n.get('name')} (difficulty: {n.get('difficulty', 3)})"
+            for n in nodes_data
+        )
+        prompt = f"""For the field "{field}", given these concept nodes:
+{node_summary}
+
+Generate edges (relationships) between them.
+Return JSON array:
+[
+  {{
+    "source": "concept_a_id",
+    "target": "concept_b_id",
+    "edge_type": "prerequisite|variant|application|extends",
+    "label": "optional label"
+  }}
+]
+
+Rules:
+- "prerequisite" means source must be learned before target
+- Only reference existing node IDs
+- Ensure the prerequisite graph is a DAG (no cycles)"""
+
+        response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT, temperature=0.3)
+        try:
+            return repair_json_array(response)
+        except ValueError:
+            return []
+
+    def _generate_learning_path(
+        self, field: str, nodes_data: list[dict], edges_data: list[dict],
+    ) -> list[str]:
+        """Phase 4: Generate a valid learning path."""
+        node_ids = [n.get("id", "") for n in nodes_data]
+        prereq_edges = [
+            f"{e['source']} -> {e['target']}"
+            for e in edges_data if e.get("edge_type") == "prerequisite"
+        ]
+        prompt = f"""For the field "{field}", given these concepts: {', '.join(node_ids)}
+And prerequisite relationships:
+{chr(10).join(prereq_edges) if prereq_edges else 'None'}
+
+Return a valid topological ordering (learning path) as a JSON array of concept IDs.
+Earlier items should be prerequisites. Return JSON: ["id1", "id2", ...]"""
+
+        response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT, temperature=0.2)
+        try:
+            path = repair_json_array(response)
+            if isinstance(path, list) and all(isinstance(x, str) for x in path):
+                return path
+        except ValueError:
+            pass
+        return node_ids
+
+    @staticmethod
+    def _validate_and_fix_learning_path(
+        nodes: list[ConceptNode],
+        edges: list[GraphEdge],
+        learning_path: list[str],
+    ) -> list[str]:
+        """Validate learning path respects prerequisites using Kahn's algorithm.
+
+        If the path is invalid, generates a valid topological sort.
+        """
+        node_ids = {n.id for n in nodes}
+        # Build adjacency for prerequisite edges only
+        in_degree: dict[str, int] = {nid: 0 for nid in node_ids}
+        adj: dict[str, list[str]] = {nid: [] for nid in node_ids}
+
+        for e in edges:
+            if e.edge_type == EdgeType.PREREQUISITE and e.source in node_ids and e.target in node_ids:
+                adj[e.source].append(e.target)
+                in_degree[e.target] = in_degree.get(e.target, 0) + 1
+
+        # Check if learning_path is a valid topological order
+        path_set = set(learning_path)
+        if path_set == node_ids:
+            # Verify each node appears after all its prerequisites
+            position = {nid: i for i, nid in enumerate(learning_path)}
+            valid = True
+            for e in edges:
+                if e.edge_type == EdgeType.PREREQUISITE:
+                    src_pos = position.get(e.source)
+                    tgt_pos = position.get(e.target)
+                    if src_pos is not None and tgt_pos is not None and src_pos >= tgt_pos:
+                        valid = False
+                        break
+            if valid:
+                return learning_path
+
+        # Invalid path - generate valid topological sort via Kahn's algorithm
+        from collections import deque
+        queue = deque(nid for nid in node_ids if in_degree.get(nid, 0) == 0)
+        result: list[str] = []
+        remaining = dict(in_degree)
+
+        while queue:
+            node_id = queue.popleft()
+            result.append(node_id)
+            for neighbor in adj.get(node_id, []):
+                remaining[neighbor] -= 1
+                if remaining[neighbor] == 0:
+                    queue.append(neighbor)
+
+        # Add any nodes not reached (cycle or disconnected)
+        for nid in node_ids:
+            if nid not in result:
+                result.append(nid)
+
+        return result
 
     def update_node_status(
         self,

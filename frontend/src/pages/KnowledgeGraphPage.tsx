@@ -17,8 +17,10 @@ interface BuildStep {
 const INITIAL_STEPS: BuildStep[] = [
   { id: 'search_surveys', label: '搜索综述论文', status: 'pending' },
   { id: 'search_papers', label: '搜索关键论文', status: 'pending' },
-  { id: 'llm_generate', label: 'LLM 生成图谱结构', status: 'pending' },
-  { id: 'parse_json', label: '解析图谱数据', status: 'pending' },
+  { id: 'generate_categories', label: '生成概念类别', status: 'pending' },
+  { id: 'generate_nodes', label: '生成概念节点', status: 'pending' },
+  { id: 'generate_edges', label: '生成概念关系', status: 'pending' },
+  { id: 'generate_path', label: '生成学习路径', status: 'pending' },
   { id: 'build_graph', label: '构建知识图谱', status: 'pending' },
 ]
 

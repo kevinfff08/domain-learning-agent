@@ -7,6 +7,7 @@ from pathlib import Path
 from src.models.content import ResearchSynthesis
 from src.models.knowledge_graph import KnowledgeGraph
 from src.models.progress import LearnerProgress
+from src.models.quiz import Quiz
 from src.models.resources import ResourceCollection
 from src.storage.local_store import LocalStore
 
@@ -191,12 +192,77 @@ class MaterialIntegrator:
             synthesis = self.store.load_content(
                 concept_id, "research_synthesis.json", ResearchSynthesis
             )
+            resources = self.store.load_content(
+                concept_id, "resources.json", ResourceCollection
+            )
+            quiz = self.store.load_content(concept_id, "quiz.json", Quiz)
+
             if synthesis:
                 md_content += f"## {node.name}\n\n"
-                md_content += f"{synthesis.intuition.why_it_matters}\n\n"
+
+                # Intuition layer
+                if synthesis.intuition.analogy:
+                    md_content += f"**Analogy:** {synthesis.intuition.analogy}\n\n"
+                if synthesis.intuition.key_insight:
+                    md_content += f"**Key Insight:** {synthesis.intuition.key_insight}\n\n"
+                if synthesis.intuition.why_it_matters:
+                    md_content += f"{synthesis.intuition.why_it_matters}\n\n"
+
+                # Mechanism layer
                 if synthesis.mechanism.mathematical_framework:
-                    md_content += f"{synthesis.mechanism.mathematical_framework}\n\n"
-                md_content += "---\n\n"
+                    md_content += f"### Mathematical Framework\n\n{synthesis.mechanism.mathematical_framework}\n\n"
+                if synthesis.mechanism.key_equations:
+                    md_content += "### Key Equations\n\n"
+                    for eq in synthesis.mechanism.key_equations:
+                        md_content += f"**{eq.name}**: ${eq.latex}$\n\n"
+                        if eq.explanation:
+                            md_content += f"{eq.explanation}\n\n"
+                if synthesis.mechanism.pseudocode:
+                    md_content += f"### Algorithm\n\n```\n{synthesis.mechanism.pseudocode}\n```\n\n"
+                if synthesis.mechanism.algorithm_steps:
+                    md_content += "### Steps\n\n"
+                    for i, step in enumerate(synthesis.mechanism.algorithm_steps, 1):
+                        md_content += f"{i}. {step}\n"
+                    md_content += "\n"
+
+                # Practice layer
+                if synthesis.practice.reference_implementations:
+                    md_content += "### Reference Implementations\n\n"
+                    for impl in synthesis.practice.reference_implementations:
+                        md_content += f"- {impl}\n"
+                    md_content += "\n"
+                if synthesis.practice.common_pitfalls:
+                    md_content += "### Common Pitfalls\n\n"
+                    for pitfall in synthesis.practice.common_pitfalls:
+                        md_content += f"- {pitfall}\n"
+                    md_content += "\n"
+                if synthesis.practice.reproduction_checklist:
+                    md_content += "### Reproduction Checklist\n\n"
+                    for i, step in enumerate(synthesis.practice.reproduction_checklist, 1):
+                        md_content += f"{i}. {step}\n"
+                    md_content += "\n"
+
+            # Resources
+            if resources and resources.total_resources > 0:
+                md_content += "### Resources\n\n"
+                for paper in resources.papers[:5]:
+                    md_content += f"- [{paper.title}]({paper.url})\n"
+                for blog in resources.blogs[:3]:
+                    md_content += f"- [{blog.title}]({blog.url})\n"
+                md_content += "\n"
+
+            # Quiz questions
+            if quiz and quiz.questions:
+                md_content += "### Self-Assessment\n\n"
+                for i, q in enumerate(quiz.questions[:3], 1):
+                    md_content += f"**Q{i}:** {q.question}\n\n"
+                    if q.options:
+                        for j, opt in enumerate(q.options):
+                            md_content += f"  {chr(65 + j)}. {opt}\n"
+                        md_content += "\n"
+                md_content += "\n"
+
+            md_content += "---\n\n"
 
         pdf_path = output_path / f"{graph.field.replace(' ', '_').lower()}_guide.pdf"
         pypandoc.convert_text(md_content, "pdf", format="md", outputfile=str(pdf_path))

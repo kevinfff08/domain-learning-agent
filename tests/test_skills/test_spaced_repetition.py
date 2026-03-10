@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from src.models.cards import CardDeck, CardType, FlashCard
+from src.models.cards import CardDeck, CardType, FlashCard, FSRSState
 from src.models.content import IntuitionLayer, MechanismLayer, PracticeLayer, ResearchSynthesis, Equation
 from src.skills.spaced_repetition import SpacedRepetitionManager
 from src.storage.local_store import LocalStore
@@ -37,15 +37,38 @@ class TestSpacedRepetitionManager:
         assert len(cards) >= 1
         assert cards[0].concept_id == "ddpm"
 
-    def test_review_card(self, manager):
-        mgr, _ = manager
+    def test_review_card_fsrs(self, manager):
+        mgr, store = manager
+        # Create a deck with the card first (for persistence)
         card = FlashCard(
             id="c1", concept_id="test", card_type=CardType.BASIC,
             front="Q", back="A",
         )
-        assert card.sm2.repetition == 0
-        card = mgr.review_card(card, 4)
-        assert card.sm2.repetition == 1
+        deck = CardDeck(name="Test", cards=[card])
+        store.save_content("test", "cards.json", deck)
+
+        # Review
+        assert card.fsrs_state.state == 1  # Learning
+        card = mgr.review_card(card, 4)  # Good
+        # FSRS should update the state
+        assert card.fsrs_state.last_review is not None
+
+    def test_review_card_persists(self, manager):
+        """#5: Verify that review_card persists the updated deck."""
+        mgr, store = manager
+        card = FlashCard(
+            id="c1", concept_id="test", card_type=CardType.BASIC,
+            front="Q", back="A",
+        )
+        deck = CardDeck(name="Test", cards=[card])
+        store.save_content("test", "cards.json", deck)
+
+        mgr.review_card(card, 5)
+
+        # Reload from store and verify persistence
+        reloaded = store.load_content("test", "cards.json", CardDeck)
+        assert reloaded is not None
+        assert reloaded.cards[0].fsrs_state.last_review is not None
 
     def test_get_due_cards_empty(self, manager):
         mgr, _ = manager

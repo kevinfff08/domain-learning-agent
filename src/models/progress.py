@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
+from src.models.bkt import BKTState
+
 
 class ConceptProgress(BaseModel):
     """Progress for a single concept."""
@@ -18,6 +20,7 @@ class ConceptProgress(BaseModel):
     cards_total: int = 0
     cards_due: int = 0
     adaptive_level: int = 0
+    bkt_state: BKTState | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     last_accessed: datetime | None = None

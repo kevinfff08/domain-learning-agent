@@ -70,7 +70,10 @@ class LearningOrchestrator:
             semantic_scholar=self.s2, arxiv=self.arxiv, open_alex=self.openalex,
         )
         self.visualizer = PathVisualizer(self.store)
-        self.researcher = DeepResearcher(self.llm, self.store)
+        self.researcher = DeepResearcher(
+            self.llm, self.store,
+            semantic_scholar=self.s2, arxiv=self.arxiv,
+        )
         self.verifier = AccuracyVerifier(
             self.llm, self.store,
             semantic_scholar=self.s2, crossref=self.crossref,
@@ -174,7 +177,7 @@ class LearningOrchestrator:
         # Step 1: Deep Research
         logger.info("  Step 1/5: Deep research for '%s'", concept_id)
         console.print("  [1/5] Generating content...")
-        synthesis = self.researcher.synthesize(concept, graph, profile)
+        synthesis = await self.researcher.synthesize(concept, graph, profile)
 
         # Step 2: Accuracy Verification
         logger.info("  Step 2/5: Accuracy verification for '%s'", concept_id)
@@ -257,8 +260,10 @@ class LearningOrchestrator:
                 "next_concept": self._get_next_concept(graph),
             }
         else:
-            # Determine adaptive intervention
-            level = self.adaptive.determine_level(result, concept)
+            # Determine adaptive intervention (pass BKT state if available)
+            cp = progress.concepts.get(concept_id)
+            bkt_state = cp.bkt_state if cp else None
+            level = self.adaptive.determine_level(result, concept, bkt_state)
             synthesis = self.store.load_content(concept_id, "research_synthesis.json",
                                                  __import__("src.models.content", fromlist=["ResearchSynthesis"]).ResearchSynthesis)
             intervention = self.adaptive.intervene(

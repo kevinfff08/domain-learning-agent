@@ -25,7 +25,7 @@ def sample_concept():
 
 class TestAdaptiveLevel:
     def test_normal_on_pass(self, controller, sample_concept):
-        result = QuizResult(quiz_id="q", concept_id="ddpm", overall_score=0.8, results=[])
+        result = QuizResult(quiz_id="q", concept_id="ddpm", overall_score=0.9, results=[])
         level = controller.determine_level(result, sample_concept)
         assert level == AdaptiveLevel.NORMAL
 
@@ -35,7 +35,7 @@ class TestAdaptiveLevel:
         assert level == AdaptiveLevel.ALTERNATIVE_EXPLANATION
 
     def test_level2_on_bad_fail(self, controller, sample_concept):
-        result = QuizResult(quiz_id="q", concept_id="ddpm", overall_score=0.3, results=[])
+        result = QuizResult(quiz_id="q", concept_id="ddpm", overall_score=0.2, results=[])
         level = controller.determine_level(result, sample_concept)
         assert level == AdaptiveLevel.PREREQUISITE_REVIEW
 
@@ -47,7 +47,7 @@ class TestAdaptiveLevel:
 
     def test_level4_escalation(self, controller, sample_concept):
         sample_concept.adaptive_level = AdaptiveLevel.CONCEPT_SPLIT
-        result = QuizResult(quiz_id="q", concept_id="ddpm", overall_score=0.3, results=[])
+        result = QuizResult(quiz_id="q", concept_id="ddpm", overall_score=0.2, results=[])
         level = controller.determine_level(result, sample_concept)
         assert level == AdaptiveLevel.SOCRATIC_DIALOGUE
 

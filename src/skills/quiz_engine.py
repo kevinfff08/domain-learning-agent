@@ -6,6 +6,7 @@ import json
 import uuid
 
 from src.llm.client import LLMClient
+from src.utils.json_repair import repair_json, repair_json_array
 from src.models.assessment import AssessmentProfile, LearningGoal
 from src.models.content import ResearchSynthesis
 from src.models.quiz import (
@@ -109,16 +110,7 @@ class QuizEngine:
         )
 
         response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT)
-
-        try:
-            questions_data = json.loads(response)
-        except json.JSONDecodeError:
-            start = response.find("[")
-            end = response.rfind("]") + 1
-            if start >= 0 and end > start:
-                questions_data = json.loads(response[start:end])
-            else:
-                raise ValueError(f"Failed to parse quiz response: {response[:200]}")
+        questions_data = repair_json_array(response)
 
         questions = []
         for q in questions_data:
@@ -172,11 +164,13 @@ class QuizEngine:
 
             elif question.question_type in (QuestionType.DERIVATION, QuestionType.CODE_COMPLETION):
                 # Use LLM to grade open-ended answers
-                score = self._grade_open_answer(question, str(user_answer))
+                graded = self._grade_open_answer(question, str(user_answer))
+                score = graded if graded is not None else 0.0
                 is_correct = score >= 0.7
 
             elif question.question_type == QuestionType.CONCEPT_COMPARISON:
-                score = self._grade_open_answer(question, str(user_answer))
+                graded = self._grade_open_answer(question, str(user_answer))
+                score = graded if graded is not None else 0.0
                 is_correct = score >= 0.7
 
             results.append(QuestionResult(
@@ -206,8 +200,13 @@ class QuizEngine:
         self.store.save_content(quiz.concept_id, "quiz_result.json", quiz_result)
         return quiz_result
 
-    def _grade_open_answer(self, question: Question, answer: str) -> float:
-        """Use LLM to grade an open-ended answer."""
+    def _grade_open_answer(self, question: Question, answer: str) -> float | None:
+        """Use LLM to grade an open-ended answer with multi-sample consistency.
+
+        Calls LLM 3 times with different temperatures and takes the mean.
+        If standard deviation > 0.3, adds a 4th call and takes median.
+        Returns None if all LLM calls fail (caller should handle retry).
+        """
         prompt = f"""Grade this student answer on a scale of 0.0 to 1.0.
 
 Question: {question.question}
@@ -218,9 +217,36 @@ Student's answer: {answer}
 
 Return JSON: {{"score": 0.0-1.0, "feedback": "brief feedback"}}"""
 
-        try:
-            response = self.llm.generate_json(prompt)
-            result = json.loads(response)
-            return float(result.get("score", 0.0))
-        except Exception:
-            return 0.0
+        temperatures = [0.2, 0.3, 0.4]
+        scores: list[float] = []
+
+        for temp in temperatures:
+            try:
+                response = self.llm.generate_json(prompt, temperature=temp)
+                result = json.loads(response)
+                scores.append(float(result.get("score", 0.0)))
+            except Exception:
+                continue
+
+        if not scores:
+            return None
+
+        # Check consistency
+        mean_score = sum(scores) / len(scores)
+        if len(scores) >= 2:
+            variance = sum((s - mean_score) ** 2 for s in scores) / len(scores)
+            std_dev = variance ** 0.5
+            if std_dev > 0.3:
+                # High disagreement - add a 4th "arbiter" call
+                try:
+                    response = self.llm.generate_json(prompt, temperature=0.1)
+                    result = json.loads(response)
+                    scores.append(float(result.get("score", 0.0)))
+                except Exception:
+                    pass
+                # Use median for robustness
+                scores.sort()
+                mid = len(scores) // 2
+                return scores[mid] if len(scores) % 2 else (scores[mid - 1] + scores[mid]) / 2
+
+        return mean_score

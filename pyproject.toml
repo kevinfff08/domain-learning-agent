@@ -30,6 +30,8 @@ dependencies = [
     "uvicorn[standard]>=0.34",
     "python-dotenv>=1.0",
     "sse-starlette>=2.0",
+    "fsrs>=4.0",
+    "tenacity>=9.0",
 ]
 
 [project.optional-dependencies]

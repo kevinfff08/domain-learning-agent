@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+import httpx
+
 from src.apis.github_client import GitHubClient
 from src.apis.papers_with_code import PapersWithCodeClient
 from src.apis.semantic_scholar import SemanticScholarClient
@@ -65,7 +67,7 @@ class ResourceCurator:
             collection.code = code
 
         # Generate blog/video/course recommendations via LLM
-        other_resources = self._recommend_other_resources(concept, profile)
+        other_resources = await self._recommend_other_resources(concept, profile)
         collection.blogs = [r for r in other_resources if r.resource_type == ResourceType.BLOG]
         collection.videos = [r for r in other_resources if r.resource_type == ResourceType.VIDEO]
         collection.courses = [r for r in other_resources if r.resource_type == ResourceType.COURSE]
@@ -109,8 +111,29 @@ class ResourceCurator:
         return sorted(resources, key=lambda r: r.citation_count, reverse=True)[:8]
 
     async def _find_code(self, concept: ConceptNode) -> list[Resource]:
-        """Find code repositories."""
+        """Find code repositories from GitHub and PapersWithCode."""
         resources = []
+
+        if self.pwc:
+            try:
+                pwc_papers = await self.pwc.search_papers(concept.name)
+                for pp in pwc_papers[:5]:
+                    repos = await self.pwc.get_paper_repos(pp.get("id", ""))
+                    for repo in repos:
+                        url = repo.get("url", "")
+                        stars = repo.get("stars", 0) or 0
+                        resources.append(Resource(
+                            url=url,
+                            title=repo.get("name", url),
+                            resource_type=ResourceType.CODE,
+                            source="PapersWithCode",
+                            quality_score=min(1.0, stars / 5000) if stars else 0.3,
+                            description=pp.get("title", ""),
+                            github_stars=stars,
+                            language=repo.get("language", "") or "",
+                        ))
+            except Exception:
+                pass
 
         if self.github:
             try:
@@ -131,15 +154,15 @@ class ResourceCurator:
             except Exception:
                 pass
 
-        return sorted(resources, key=lambda r: r.github_stars, reverse=True)[:5]
+        return sorted(resources, key=lambda r: r.github_stars, reverse=True)[:8]
 
-    def _recommend_other_resources(
+    async def _recommend_other_resources(
         self,
         concept: ConceptNode,
         profile: AssessmentProfile,
     ) -> list[Resource]:
         """Use LLM to recommend blogs, videos, and courses."""
-        import json
+        from src.utils.json_repair import repair_json_array
 
         prompt = f"""Recommend high-quality learning resources for the concept "{concept.name}"
 in the field of {profile.target_field}.
@@ -169,7 +192,7 @@ Only recommend resources you are confident actually exist. If unsure, omit them.
 
         try:
             response = self.llm.generate_json(prompt)
-            data = json.loads(response)
+            data = repair_json_array(response)
             resources = []
             for item in data:
                 rt = item.get("resource_type", "blog")
@@ -182,6 +205,24 @@ Only recommend resources you are confident actually exist. If unsure, omit them.
                     difficulty=item.get("difficulty", "intermediate"),
                     description=item.get("description", ""),
                 ))
+            # Validate URLs
+            resources = await self._validate_urls(resources)
             return resources
         except Exception:
             return []
+
+    @staticmethod
+    async def _validate_urls(resources: list[Resource]) -> list[Resource]:
+        """Validate URLs by sending HEAD requests, discard 404s and timeouts."""
+        validated = []
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            for r in resources:
+                if not r.url:
+                    continue
+                try:
+                    resp = await client.head(r.url)
+                    if resp.status_code < 400:
+                        validated.append(r)
+                except (httpx.HTTPError, httpx.TimeoutException):
+                    continue
+        return validated

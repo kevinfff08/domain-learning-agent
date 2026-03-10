@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from enum import Enum
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
+from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class CardType(str, Enum):
@@ -18,7 +19,7 @@ class CardType(str, Enum):
 
 
 class SM2State(BaseModel):
-    """SuperMemo SM-2 algorithm state for a single card."""
+    """SuperMemo SM-2 algorithm state (deprecated, kept for backward compatibility)."""
 
     interval: float = Field(default=1.0, description="Days until next review")
     repetition: int = Field(default=0, description="Number of consecutive correct reviews")
@@ -26,41 +27,17 @@ class SM2State(BaseModel):
     next_review: datetime = Field(default_factory=datetime.now)
     last_reviewed: datetime | None = None
 
-    def update(self, quality: int) -> None:
-        """Update SM-2 state based on review quality (0-5).
 
-        0-2: incorrect, restart
-        3: correct with difficulty
-        4: correct with some hesitation
-        5: perfect recall
-        """
-        quality = max(0, min(5, quality))
+class FSRSState(BaseModel):
+    """FSRS-6 algorithm state for a single card."""
 
-        # Update easiness factor
-        self.easiness = max(
-            1.3,
-            self.easiness + 0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02),
-        )
-
-        if quality < 3:
-            # Reset on failure
-            self.repetition = 0
-            self.interval = 1.0
-        else:
-            if self.repetition == 0:
-                self.interval = 1.0
-            elif self.repetition == 1:
-                self.interval = 6.0
-            else:
-                self.interval = self.interval * self.easiness
-
-            self.repetition += 1
-
-        # Cap interval at 365 days
-        self.interval = min(self.interval, 365.0)
-
-        self.last_reviewed = datetime.now()
-        self.next_review = datetime.now() + timedelta(days=self.interval)
+    card_id: int = Field(default=0)
+    state: int = Field(default=1, description="1=Learning, 2=Review, 3=Relearning")
+    step: int | None = Field(default=0)
+    stability: float | None = Field(default=None)
+    difficulty: float | None = Field(default=None)
+    due: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    last_review: datetime | None = None
 
 
 class FlashCard(BaseModel):
@@ -72,13 +49,26 @@ class FlashCard(BaseModel):
     front: str = Field(description="Question / prompt side")
     back: str = Field(description="Answer side")
     tags: list[str] = Field(default_factory=list)
-    sm2: SM2State = Field(default_factory=SM2State)
+    fsrs_state: FSRSState = Field(default_factory=FSRSState)
     created_at: datetime = Field(default_factory=datetime.now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_sm2_to_fsrs(cls, data: Any) -> Any:
+        """Backward compatibility: migrate old SM2 data to FSRS."""
+        if isinstance(data, dict) and "sm2" in data and "fsrs_state" not in data:
+            data["fsrs_state"] = FSRSState().model_dump()
+            data.pop("sm2", None)
+        return data
 
     @property
     def is_due(self) -> bool:
         """Whether this card is due for review."""
-        return datetime.now() >= self.sm2.next_review
+        now = datetime.now(timezone.utc)
+        due = self.fsrs_state.due
+        if due.tzinfo is None:
+            due = due.replace(tzinfo=timezone.utc)
+        return now >= due
 
 
 class CardDeck(BaseModel):

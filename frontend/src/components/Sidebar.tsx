@@ -22,7 +22,7 @@ export default function Sidebar() {
 
   useEffect(() => {
     fetchAssessment().then((a) => {
-      if (a) setFieldName(a.field)
+      if (a) setFieldName(a.target_field)
     })
   }, [])
 

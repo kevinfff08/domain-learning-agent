@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
+from src.models.bkt import BKTState
 from src.models.knowledge_graph import ConceptStatus, KnowledgeGraph
 from src.models.progress import ConceptProgress, LearnerProgress, WeeklyStats
 from src.models.quiz import QuizResult
@@ -46,7 +47,10 @@ class ProgressTracker:
         cp.status = "in_progress"
         cp.started_at = datetime.now()
         cp.last_accessed = datetime.now()
-        progress.last_active = datetime.now()
+        # Initialize BKT state if not present
+        if cp.bkt_state is None:
+            cp.bkt_state = BKTState(concept_id=concept_id)
+        self._update_streak(progress)
         progress.updated_at = datetime.now()
         self.store.save_progress(progress)
         return progress
@@ -59,14 +63,22 @@ class ProgressTracker:
         """Record a quiz result for a concept."""
         cp = progress.get_or_create_concept(quiz_result.concept_id)
         cp.quiz_scores.append(quiz_result.overall_score)
-        cp.mastery_level = max(cp.mastery_level, quiz_result.overall_score)
+
+        # Weighted mastery update (replaces naive max())
+        cp.mastery_level = 0.7 * quiz_result.overall_score + 0.3 * cp.mastery_level
         cp.last_accessed = datetime.now()
+
+        # Update BKT state
+        if cp.bkt_state is None:
+            cp.bkt_state = BKTState(concept_id=quiz_result.concept_id)
+        for r in quiz_result.results:
+            cp.bkt_state.update(r.is_correct)
 
         if quiz_result.passed:
             cp.status = "completed"
             cp.completed_at = datetime.now()
 
-        progress.last_active = datetime.now()
+        self._update_streak(progress)
         progress.updated_at = datetime.now()
         self.store.save_progress(progress)
         return progress
@@ -85,6 +97,34 @@ class ProgressTracker:
         progress.updated_at = datetime.now()
         self.store.save_progress(progress)
         return progress
+
+    @staticmethod
+    def apply_decay(progress: LearnerProgress) -> None:
+        """Apply FSRS-style retrievability decay to mastery levels."""
+        now = datetime.now()
+        for cp in progress.concepts.values():
+            if cp.last_accessed and cp.mastery_level > 0:
+                days_since = (now - cp.last_accessed).total_seconds() / 86400
+                if days_since > 0:
+                    # FSRS retrievability: R = (1 + t/(9*S))^(-1)
+                    stability = 30.0  # default stability in days
+                    retrievability = (1 + days_since / (9 * stability)) ** (-1)
+                    cp.mastery_level = cp.mastery_level * retrievability
+
+    def _update_streak(self, progress: LearnerProgress) -> None:
+        """Update consecutive learning days streak."""
+        today = datetime.now().date()
+        if progress.last_active:
+            last_date = progress.last_active.date()
+            if last_date == today:
+                pass  # already counted today
+            elif last_date == today - timedelta(days=1):
+                progress.streak_days += 1
+            else:
+                progress.streak_days = 1
+        else:
+            progress.streak_days = 1
+        progress.last_active = datetime.now()
 
     def generate_weekly_report(self, progress: LearnerProgress) -> str:
         """Generate a markdown weekly progress report."""

@@ -10,7 +10,8 @@ from src.models.assessment import (
     ProgrammingSkills,
     SkillLevel,
 )
-from src.models.cards import CardDeck, CardType, FlashCard, SM2State
+from src.models.bkt import BKTParams, BKTState
+from src.models.cards import CardDeck, CardType, FlashCard, FSRSState, SM2State
 from src.models.content import (
     CrossConceptConnection,
     Equation,
@@ -57,6 +58,9 @@ __all__ = [
     "CardDeck",
     "CardType",
     "FlashCard",
+    "BKTParams",
+    "BKTState",
+    "FSRSState",
     "SM2State",
     "CrossConceptConnection",
     "Equation",

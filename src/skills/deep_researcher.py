@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import json
-
+from src.apis.arxiv_client import ArxivClient
+from src.apis.semantic_scholar import SemanticScholarClient
 from src.llm.client import LLMClient
+from src.utils.json_repair import repair_json
+from src.utils.rag_interface import RAGProvider, SimpleRAG
 from src.models.assessment import AssessmentProfile
 from src.models.content import (
     CrossConceptConnection,
@@ -28,6 +30,8 @@ SYNTHESIS_PROMPT = """Create a comprehensive, PhD-level learning document for th
 Concept description: {description}
 Field: {field}
 Key papers: {key_papers}
+Retrieved paper abstracts:
+{paper_context}
 User's learning goal: {learning_goal}
 User's math level: {math_level}/5
 User's learning style: {learning_style}
@@ -85,17 +89,47 @@ Requirements:
 - For "reproduce_papers" goal: include detailed reproduction checklist
 - Cross-concept connections: explicitly link to related concepts in the graph
 - Be comprehensive but clear - this is PhD-level content
+- Base your content on the provided paper abstracts when available. Cite specific papers.
 """
 
 
 class DeepResearcher:
     """PhD-level three-layer content synthesis skill."""
 
-    def __init__(self, llm: LLMClient, store: LocalStore):
+    def __init__(
+        self,
+        llm: LLMClient,
+        store: LocalStore,
+        semantic_scholar: SemanticScholarClient | None = None,
+        arxiv: ArxivClient | None = None,
+        rag_provider: RAGProvider | None = None,
+    ):
         self.llm = llm
         self.store = store
+        self.s2 = semantic_scholar
+        self.arxiv = arxiv
+        self.rag = rag_provider or SimpleRAG(semantic_scholar, arxiv)
 
-    def synthesize(
+    async def _fetch_paper_context(self, concept: ConceptNode) -> str:
+        """Fetch real paper abstracts from S2/arXiv for grounding."""
+        try:
+            results = await self.rag.query(concept.name)
+        except Exception:
+            results = []
+
+        if not results:
+            return "No papers retrieved - use your knowledge"
+
+        lines = []
+        for r in results[:8]:
+            title = r.get("title", "")
+            content = r.get("content", "")[:300]
+            source = r.get("source", "")
+            year = r.get("year", "")
+            lines.append(f"- [{source}] {title} ({year}): {content}")
+        return "\n".join(lines)
+
+    async def synthesize(
         self,
         concept: ConceptNode,
         graph: KnowledgeGraph,
@@ -116,6 +150,9 @@ class DeepResearcher:
             for p in concept.key_papers
         ) if concept.key_papers else "No specific papers listed - use your knowledge"
 
+        # Fetch real paper context
+        paper_context = await self._fetch_paper_context(concept)
+
         math_level = round(sum([
             profile.math_foundations.linear_algebra.level,
             profile.math_foundations.probability.level,
@@ -128,6 +165,7 @@ class DeepResearcher:
             description=concept.description,
             field=graph.field,
             key_papers=key_papers_text,
+            paper_context=paper_context,
             learning_goal=profile.learning_goal.value,
             math_level=math_level,
             learning_style=profile.learning_style.value,
@@ -138,15 +176,7 @@ class DeepResearcher:
             prompt, system=SYSTEM_PROMPT, temperature=0.3
         )
 
-        try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
-            start = response.find("{")
-            end = response.rfind("}") + 1
-            if start >= 0 and end > start:
-                data = json.loads(response[start:end])
-            else:
-                raise ValueError(f"Failed to parse synthesis response: {response[:200]}")
+        data = repair_json(response)
 
         # Build synthesis
         intuition_data = data.get("intuition", {})
@@ -216,14 +246,9 @@ Focus on the intuition and mechanism layers."""
         response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT)
 
         try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
-            start = response.find("{")
-            end = response.rfind("}") + 1
-            if start >= 0 and end > start:
-                data = json.loads(response[start:end])
-            else:
-                return previous_synthesis  # Fallback to original
+            data = repair_json(response)
+        except ValueError:
+            return previous_synthesis  # Fallback to original
 
         intuition_data = data.get("intuition", {})
         mechanism_data = data.get("mechanism", {})

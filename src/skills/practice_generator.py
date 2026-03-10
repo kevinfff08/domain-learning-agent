@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import json
+import subprocess
+import sys
 from pathlib import Path
 
 from src.llm.client import LLMClient
+from src.utils.json_repair import repair_json
 from src.models.assessment import AssessmentProfile, LearningGoal
 from src.models.content import ResearchSynthesis
 from src.storage.local_store import LocalStore
@@ -51,21 +53,16 @@ Return JSON:
         response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT)
 
         try:
-            data = json.loads(response)
-        except json.JSONDecodeError:
-            start = response.find("{")
-            end = response.rfind("}") + 1
-            if start >= 0 and end > start:
-                data = json.loads(response[start:end])
-            else:
-                data = {
-                    "filename": f"challenge_{synthesis.concept_id}.py",
-                    "description": f"Implement {synthesis.title}",
-                    "difficulty": 3,
-                    "code": f"# TODO: Implement {synthesis.title}\n",
-                    "solution": "",
-                    "hints": [],
-                }
+            data = repair_json(response)
+        except ValueError:
+            data = {
+                "filename": f"challenge_{synthesis.concept_id}.py",
+                "description": f"Implement {synthesis.title}",
+                "difficulty": 3,
+                "code": f"# TODO: Implement {synthesis.title}\n",
+                "solution": "",
+                "hints": [],
+            }
 
         # Save challenge
         exercises_dir = self.store.data_dir / "exercises" / synthesis.concept_id
@@ -79,16 +76,62 @@ Return JSON:
             solution, encoding="utf-8"
         )
 
+        # Verify solution code
+        verified = False
+        solution = data.get("solution", "")
+        if solution:
+            ok, err = self._verify_code(solution)
+            if not ok:
+                # Syntax error → try LLM regen once
+                retry_prompt = f"Fix syntax/runtime errors in this code:\n```python\n{solution}\n```\nError: {err}\nReturn only the corrected Python code."
+                try:
+                    fixed = self.llm.generate_json(retry_prompt, system=SYSTEM_PROMPT)
+                    # Strip fences
+                    import re
+                    fixed = re.sub(r"^```(?:python)?\s*", "", fixed.strip())
+                    fixed = re.sub(r"\s*```$", "", fixed.strip())
+                    ok2, _ = self._verify_code(fixed)
+                    if ok2:
+                        data["solution"] = fixed
+                        solution = fixed
+                        verified = True
+                except Exception:
+                    pass
+            else:
+                verified = True
+
         self.store.save_json(
             f"exercises/{synthesis.concept_id}/challenge_meta.json",
             {
                 "description": data.get("description", ""),
                 "difficulty": data.get("difficulty", 3),
                 "hints": data.get("hints", []),
+                "verified": verified,
             },
         )
 
         return data
+
+    @staticmethod
+    def _verify_code(code: str, timeout: int = 30) -> tuple[bool, str]:
+        """Execute Python code in a subprocess to verify it runs.
+
+        Returns (success, error_message).
+        """
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+            if result.returncode == 0:
+                return True, ""
+            return False, result.stderr[:500]
+        except subprocess.TimeoutExpired:
+            return False, "Execution timed out"
+        except Exception as exc:
+            return False, str(exc)
 
     def generate_notebook(
         self,

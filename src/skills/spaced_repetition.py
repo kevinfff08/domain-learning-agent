@@ -1,14 +1,16 @@
-"""Skill 9: Spaced Repetition Manager - SM-2 algorithm + Anki export."""
+"""Skill 9: Spaced Repetition Manager - FSRS algorithm + Anki export."""
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime
 from pathlib import Path
 
+from fsrs import Card as FSRSCard, Rating, Scheduler, State
+
 from src.llm.client import LLMClient
-from src.models.cards import CardDeck, CardType, FlashCard, SM2State
+from src.utils.json_repair import repair_json_array
+from src.models.cards import CardDeck, CardType, FlashCard, FSRSState
 from src.models.content import ResearchSynthesis
 from src.storage.local_store import LocalStore
 
@@ -49,11 +51,12 @@ Rules:
 
 
 class SpacedRepetitionManager:
-    """SM-2 spaced repetition with Anki export."""
+    """FSRS-6 spaced repetition with Anki export."""
 
     def __init__(self, llm: LLMClient, store: LocalStore):
         self.llm = llm
         self.store = store
+        self.scheduler = Scheduler()
 
     def generate_cards(self, synthesis: ResearchSynthesis) -> list[FlashCard]:
         """Generate flashcards from a research synthesis."""
@@ -74,14 +77,9 @@ class SpacedRepetitionManager:
         response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT)
 
         try:
-            cards_data = json.loads(response)
-        except json.JSONDecodeError:
-            start = response.find("[")
-            end = response.rfind("]") + 1
-            if start >= 0 and end > start:
-                cards_data = json.loads(response[start:end])
-            else:
-                cards_data = []
+            cards_data = repair_json_array(response)
+        except ValueError:
+            cards_data = []
 
         cards = []
         for i, c in enumerate(cards_data):
@@ -106,12 +104,65 @@ class SpacedRepetitionManager:
         return cards
 
     def review_card(self, card: FlashCard, quality: int) -> FlashCard:
-        """Process a card review with SM-2 algorithm.
+        """Process a card review with FSRS algorithm.
 
-        quality: 0-5 (0-2 = wrong, 3 = hard, 4 = good, 5 = easy)
+        quality: 0-5 (mapped to FSRS Rating: 0-2=Again, 3=Hard, 4=Good, 5=Easy)
         """
-        card.sm2.update(quality)
+        # Map 0-5 quality to FSRS Rating
+        if quality <= 2:
+            rating = Rating.Again
+        elif quality == 3:
+            rating = Rating.Hard
+        elif quality == 4:
+            rating = Rating.Good
+        else:
+            rating = Rating.Easy
+
+        # Reconstruct fsrs Card from our state
+        fsrs_card = self._to_fsrs_card(card.fsrs_state)
+
+        # Schedule
+        fsrs_card, _log = self.scheduler.review_card(fsrs_card, rating)
+
+        # Update our state
+        card.fsrs_state = self._from_fsrs_card(fsrs_card)
+
+        # Persist: load deck, replace card, save
+        deck = self.store.load_content(card.concept_id, "cards.json", CardDeck)
+        if deck:
+            for i, c in enumerate(deck.cards):
+                if c.id == card.id:
+                    deck.cards[i] = card
+                    break
+            self.store.save_content(card.concept_id, "cards.json", deck)
+
         return card
+
+    @staticmethod
+    def _to_fsrs_card(state: FSRSState) -> FSRSCard:
+        """Convert our FSRSState to fsrs library Card."""
+        return FSRSCard.from_dict({
+            "card_id": state.card_id,
+            "state": state.state,
+            "step": state.step,
+            "stability": state.stability,
+            "difficulty": state.difficulty,
+            "due": state.due.isoformat() if state.due else None,
+            "last_review": state.last_review.isoformat() if state.last_review else None,
+        })
+
+    @staticmethod
+    def _from_fsrs_card(fsrs_card: FSRSCard) -> FSRSState:
+        """Convert fsrs library Card to our FSRSState."""
+        return FSRSState(
+            card_id=fsrs_card.card_id,
+            state=fsrs_card.state.value,
+            step=fsrs_card.step,
+            stability=fsrs_card.stability,
+            difficulty=fsrs_card.difficulty,
+            due=fsrs_card.due,
+            last_review=fsrs_card.last_review,
+        )
 
     def get_due_cards(self, concept_id: str | None = None) -> list[FlashCard]:
         """Get all cards due for review."""

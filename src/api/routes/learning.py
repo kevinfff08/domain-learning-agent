@@ -6,6 +6,7 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from src.api.deps import get_orchestrator
@@ -56,7 +57,7 @@ async def learn_concept_stream(
         yield {"event": "step_start", "data": json.dumps({
             "step": 1, "name": "deep_research", "message": "正在生成三层内容（直觉/机制/实践）..."
         })}
-        synthesis = orch.researcher.synthesize(concept, graph, profile)
+        synthesis = await orch.researcher.synthesize(concept, graph, profile)
         yield {"event": "step_complete", "data": json.dumps({
             "step": 1, "name": "deep_research",
             "result": json.loads(synthesis.model_dump_json()),
@@ -110,6 +111,26 @@ async def learn_concept_stream(
         })}
 
     return EventSourceResponse(event_generator())
+
+
+class SocraticRequest(BaseModel):
+    """Socratic dialogue advance request."""
+    student_answer: str
+    current_step: int
+    dialogue: list[dict]
+
+
+@router.post("/learn/{concept_id}/socratic")
+def advance_socratic(
+    concept_id: str,
+    req: SocraticRequest,
+    orch: LearningOrchestrator = Depends(get_orchestrator),
+):
+    """Advance Socratic dialogue by evaluating student's answer."""
+    result = orch.adaptive.advance_socratic(
+        concept_id, req.student_answer, req.current_step, req.dialogue
+    )
+    return result
 
 
 @router.get("/learn/{concept_id}/content")
