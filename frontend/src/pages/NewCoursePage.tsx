@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { createAssessment } from '../api/client'
+import { createCourse } from '../api/client'
 
-export default function AssessmentPage() {
+export default function NewCoursePage() {
   const navigate = useNavigate()
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -20,7 +20,7 @@ export default function AssessmentPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!field.trim()) {
-      setError('请输入研究领域')
+      setError('请输入学习领域')
       return
     }
 
@@ -28,7 +28,7 @@ export default function AssessmentPage() {
     setError(null)
 
     try {
-      await createAssessment({
+      const result = await createCourse({
         field: field.trim(),
         math_level: mathLevel,
         programming_level: programmingLevel,
@@ -37,9 +37,9 @@ export default function AssessmentPage() {
         available_hours: availableHours,
         learning_style: learningStyle,
       })
-      navigate('/graph')
+      navigate(`/courses/${result.course.id}`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '提交失败')
+      setError(err instanceof Error ? err.message : '创建失败')
     } finally {
       setSubmitting(false)
     }
@@ -47,9 +47,9 @@ export default function AssessmentPage() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold text-slate-800 mb-2">能力评估</h1>
+      <h1 className="text-2xl font-bold text-slate-800 mb-2">创建新课程</h1>
       <p className="text-sm text-slate-400 mb-8">
-        请填写你的背景信息，以便系统为你定制学习路径
+        填写你的背景和学习目标，系统将为你生成定制化的学习教材
       </p>
 
       {error && (
@@ -62,7 +62,7 @@ export default function AssessmentPage() {
         {/* Field */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
-            研究领域
+            学习领域
           </label>
           <input
             type="text"
@@ -105,7 +105,7 @@ export default function AssessmentPage() {
 
         {/* Domain Level */}
         <SliderField
-          label="领域知识水平"
+          label="领域知识"
           value={domainLevel}
           onChange={setDomainLevel}
           descriptions={[
@@ -126,13 +126,11 @@ export default function AssessmentPage() {
           <select
             value={learningGoal}
             onChange={(e) =>
-              setLearningGoal(
-                e.target.value as typeof learningGoal
-              )
+              setLearningGoal(e.target.value as typeof learningGoal)
             }
             className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
           >
-            <option value="understand_concepts">理解核心概念</option>
+            <option value="understand_concepts">理解概念</option>
             <option value="reproduce_papers">复现论文</option>
             <option value="improve_methods">改进方法</option>
           </select>
@@ -141,7 +139,7 @@ export default function AssessmentPage() {
         {/* Available Hours */}
         <div>
           <label className="block text-sm font-medium text-slate-700 mb-1">
-            每周可用学习时间 (小时)
+            可用时间 (每周小时数)
           </label>
           <input
             type="number"
@@ -166,7 +164,7 @@ export default function AssessmentPage() {
             <option value="intuition_first">直觉优先 - 偏好类比和可视化</option>
             <option value="mathematical_first">数学优先 - 偏好公式推导</option>
             <option value="code_first">代码优先 - 偏好实现和实验</option>
-            <option value="balanced">均衡型 - 三者兼顾</option>
+            <option value="balanced">均衡 - 三者兼顾</option>
           </select>
         </div>
 
@@ -175,7 +173,7 @@ export default function AssessmentPage() {
           disabled={submitting}
           className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {submitting ? '提交中...' : '开始学习之旅'}
+          {submitting ? '创建中...' : '创建课程'}
         </button>
       </form>
     </div>

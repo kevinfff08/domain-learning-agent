@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.apis.base import BaseAPIClient
+from src.models.textbook import PaperReference
 
 
 class OpenAlexClient(BaseAPIClient):
@@ -44,6 +45,73 @@ class OpenAlexClient(BaseAPIClient):
 
         data = await self.get("/works", params=params)
         return data.get("results", [])
+
+    @staticmethod
+    def reconstruct_abstract(inverted_index: dict | None) -> str:
+        """Reconstruct plain-text abstract from OpenAlex abstract_inverted_index."""
+        if not inverted_index:
+            return ""
+        word_positions: list[tuple[int, str]] = []
+        for word, positions in inverted_index.items():
+            for pos in positions:
+                word_positions.append((pos, word))
+        word_positions.sort()
+        return " ".join(w for _, w in word_positions)
+
+    @staticmethod
+    def to_paper_reference(work: dict, role: str = "related") -> PaperReference:
+        """Convert an OpenAlex work dict (raw or normalized) to PaperReference."""
+        # Handle both raw OpenAlex format and normalize_work() output
+        if "authorships" in work:
+            # Raw OpenAlex format
+            authorships = work.get("authorships", []) or []
+            authors = [
+                a.get("author", {}).get("display_name", "")
+                for a in authorships[:5]
+                if a.get("author")
+            ]
+            year = work.get("publication_year", 0) or 0
+            citation_count = work.get("cited_by_count", 0) or 0
+            doi_raw = work.get("doi") or ""
+            doi = doi_raw.replace("https://doi.org/", "") if doi_raw else ""
+        else:
+            # Normalized format (from normalize_work)
+            authors = work.get("authors", [])[:5]
+            year = work.get("year", 0) or 0
+            citation_count = work.get("citationCount", 0) or 0
+            doi = work.get("doi", "")
+        return PaperReference(
+            arxiv_id="",
+            doi=doi,
+            title=work.get("title", ""),
+            authors=authors,
+            year=year,
+            venue="",
+            citation_count=citation_count,
+            role=role,
+        )
+
+    @staticmethod
+    def normalize_work(work: dict) -> dict:
+        """Normalize an OpenAlex work to the common dict format used by domain_mapper."""
+        authorships = work.get("authorships", []) or []
+        abstract = OpenAlexClient.reconstruct_abstract(
+            work.get("abstract_inverted_index")
+        )
+        doi_raw = work.get("doi") or ""
+        return {
+            "title": work.get("title", ""),
+            "authors": [
+                a.get("author", {}).get("display_name", "")
+                for a in authorships[:5]
+                if a.get("author")
+            ],
+            "year": work.get("publication_year", 0) or 0,
+            "abstract": abstract,
+            "citationCount": work.get("cited_by_count", 0) or 0,
+            "doi": doi_raw.replace("https://doi.org/", "") if doi_raw else "",
+            "_source": "openalex",
+        }
 
     async def get_concept(self, concept_name: str) -> dict | None:
         """Search for an academic concept/topic."""

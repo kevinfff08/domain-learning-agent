@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from src.models.bkt import BKTState
-from src.models.knowledge_graph import ConceptStatus, KnowledgeGraph
+from src.models.textbook import ChapterStatus, Textbook
 from src.models.progress import ConceptProgress, LearnerProgress, WeeklyStats
 from src.models.quiz import QuizResult
 from src.storage.local_store import LocalStore
@@ -25,31 +25,31 @@ class ProgressTracker:
             self.store.save_progress(progress)
         return progress
 
-    def initialize_from_graph(self, graph: KnowledgeGraph) -> LearnerProgress:
-        """Initialize progress tracking from a knowledge graph."""
-        progress = self.get_or_create_progress(graph.field)
+    def initialize_from_textbook(self, textbook: Textbook) -> LearnerProgress:
+        """Initialize progress tracking from a textbook."""
+        progress = self.get_or_create_progress(textbook.field)
 
-        for node in graph.nodes:
-            if node.id not in progress.concepts:
-                progress.concepts[node.id] = ConceptProgress(
-                    concept_id=node.id,
-                    status=node.status.value,
-                    mastery_level=node.mastery,
+        for chapter in textbook.chapters:
+            if chapter.id not in progress.concepts:
+                progress.concepts[chapter.id] = ConceptProgress(
+                    concept_id=chapter.id,
+                    status=chapter.status.value,
+                    mastery_level=chapter.mastery,
                 )
 
         progress.updated_at = datetime.now()
         self.store.save_progress(progress)
         return progress
 
-    def start_concept(self, progress: LearnerProgress, concept_id: str) -> LearnerProgress:
-        """Mark a concept as started."""
-        cp = progress.get_or_create_concept(concept_id)
+    def start_chapter(self, progress: LearnerProgress, chapter_id: str) -> LearnerProgress:
+        """Mark a chapter as started."""
+        cp = progress.get_or_create_concept(chapter_id)
         cp.status = "in_progress"
         cp.started_at = datetime.now()
         cp.last_accessed = datetime.now()
         # Initialize BKT state if not present
         if cp.bkt_state is None:
-            cp.bkt_state = BKTState(concept_id=concept_id)
+            cp.bkt_state = BKTState(concept_id=chapter_id)
         self._update_streak(progress)
         progress.updated_at = datetime.now()
         self.store.save_progress(progress)
@@ -166,19 +166,17 @@ class ProgressTracker:
 
         return report
 
-    def sync_with_graph(
+    def sync_with_textbook(
         self,
         progress: LearnerProgress,
-        graph: KnowledgeGraph,
+        textbook: Textbook,
     ) -> None:
-        """Sync progress back to the knowledge graph."""
-        for node in graph.nodes:
-            cp = progress.concepts.get(node.id)
+        """Sync progress back to the textbook chapters."""
+        for chapter in textbook.chapters:
+            cp = progress.concepts.get(chapter.id)
             if cp:
-                node.mastery = cp.mastery_level
+                chapter.mastery = cp.mastery_level
                 if cp.status == "completed":
-                    node.status = ConceptStatus.COMPLETED
+                    chapter.status = ChapterStatus.COMPLETED
                 elif cp.status == "in_progress":
-                    node.status = ConceptStatus.IN_PROGRESS
-
-        self.store.save_knowledge_graph(graph.field, graph)
+                    chapter.status = ChapterStatus.IN_PROGRESS

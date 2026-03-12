@@ -1,8 +1,7 @@
-"""Skills package - 12 agent skills organized in 4 layers."""
+"""Skills package."""
 
 from src.skills.pre_assessor import PreAssessor
-from src.skills.domain_mapper import DomainMapper
-from src.skills.path_visualizer import PathVisualizer
+from src.skills.textbook_planner import TextbookPlanner
 from src.skills.deep_researcher import DeepResearcher
 from src.skills.accuracy_verifier import AccuracyVerifier
 from src.skills.resource_curator import ResourceCurator
@@ -16,8 +15,7 @@ from src.skills.material_integrator import MaterialIntegrator
 __all__ = [
     # Layer 1: Assessment & Planning
     "PreAssessor",
-    "DomainMapper",
-    "PathVisualizer",
+    "TextbookPlanner",
     # Layer 2: Knowledge Construction & Verification
     "DeepResearcher",
     "AccuracyVerifier",

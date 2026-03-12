@@ -15,6 +15,29 @@ load_dotenv()
 
 logger = get_logger("llm.client")
 
+# Max output tokens by model family (prefix match, order matters)
+_MODEL_FAMILY_MAX_TOKENS: list[tuple[str, int]] = [
+    ("claude-opus", 32000),
+    ("claude-sonnet", 16000),
+    ("claude-haiku", 8192),
+]
+_DEFAULT_MAX_TOKENS = 8192
+
+
+def _resolve_max_tokens(model: str) -> int:
+    """Return max output tokens from env var, or fall back to model maximum."""
+    env_val = os.environ.get("LLM_MAX_TOKENS", "").strip()
+    if env_val:
+        try:
+            return int(env_val)
+        except ValueError:
+            logger.warning("Invalid LLM_MAX_TOKENS=%r, ignoring", env_val)
+    # No env override → match model family by prefix
+    for prefix, limit in _MODEL_FAMILY_MAX_TOKENS:
+        if model.startswith(prefix):
+            return limit
+    return _DEFAULT_MAX_TOKENS
+
 
 class LLMClient:
     """Wrapper around Anthropic API for structured LLM interactions."""
@@ -23,11 +46,11 @@ class LLMClient:
         self,
         api_key: str | None = None,
         model: str = "claude-sonnet-4-20250514",
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         base_url: str | None = None,
     ):
         self.model = model
-        self.max_tokens = max_tokens
+        self.max_tokens = max_tokens or _resolve_max_tokens(model)
         self._client: Anthropic | None = None
 
         # Determine mode from env
@@ -80,14 +103,25 @@ class LLMClient:
 
         t0 = time.perf_counter()
         try:
-            response = self.client.messages.create(**kwargs)
+            # Use streaming to avoid SDK non-streaming timeout for large max_tokens
+            chunks: list[str] = []
+            input_tokens = 0
+            output_tokens = 0
+            stop_reason = ""
+            with self.client.messages.stream(**kwargs) as stream:
+                for text in stream.text_stream:
+                    chunks.append(text)
+                msg = stream.get_final_message()
+                input_tokens = msg.usage.input_tokens
+                output_tokens = msg.usage.output_tokens
+                stop_reason = msg.stop_reason
+
             elapsed = time.perf_counter() - t0
-            usage = response.usage
             logger.info(
                 "LLM response: %.1fs, input_tokens=%d, output_tokens=%d, stop=%s",
-                elapsed, usage.input_tokens, usage.output_tokens, response.stop_reason,
+                elapsed, input_tokens, output_tokens, stop_reason,
             )
-            return response.content[0].text
+            return "".join(chunks)
         except Exception as exc:
             elapsed = time.perf_counter() - t0
             logger.error("LLM request failed after %.1fs: %s", elapsed, exc)
@@ -98,16 +132,21 @@ class LLMClient:
         prompt: str,
         system: str = "",
         temperature: float = 0.2,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate JSON output from a prompt.
 
-        Adds instruction to return valid JSON.
+        Adds instruction to return valid JSON.  Uses instance default
+        max_tokens (model maximum) unless explicitly overridden.
         """
         json_system = (system + "\n\n" if system else "") + (
             "You must respond with valid JSON only. No markdown fences, no explanations, "
             "just the JSON object/array."
         )
-        return self.generate(prompt, system=json_system, temperature=temperature)
+        return self.generate(
+            prompt, system=json_system, temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     def generate_with_template(
         self,

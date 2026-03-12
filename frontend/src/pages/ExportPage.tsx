@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { fetchAssessment, exportMaterials } from '../api/client'
+import { useState } from 'react'
+import { useCourse } from '../contexts/CourseContext'
+import { exportMaterials } from '../api/client'
 
 const formatOptions = [
   {
@@ -26,22 +26,11 @@ const formatOptions = [
 ]
 
 export default function ExportPage() {
-  const navigate = useNavigate()
-  const [field, setField] = useState<string | null>(null)
+  const { courseId, course } = useCourse()
   const [selectedFormats, setSelectedFormats] = useState<Set<string>>(new Set())
   const [exporting, setExporting] = useState(false)
   const [results, setResults] = useState<Record<string, string> | null>(null)
   const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    fetchAssessment().then((a) => {
-      if (!a) {
-        navigate('/assess')
-        return
-      }
-      setField(a.target_field)
-    })
-  }, [navigate])
 
   const toggleFormat = (id: string) => {
     setSelectedFormats((prev) => {
@@ -53,13 +42,13 @@ export default function ExportPage() {
   }
 
   const handleExport = async () => {
-    if (!field || selectedFormats.size === 0) return
+    if (!courseId || selectedFormats.size === 0) return
     setExporting(true)
     setError(null)
     setResults(null)
 
     try {
-      const res = await exportMaterials(field, Array.from(selectedFormats))
+      const res = await exportMaterials(courseId, Array.from(selectedFormats))
       setResults(res)
     } catch (err) {
       setError(err instanceof Error ? err.message : '导出失败')
@@ -72,7 +61,8 @@ export default function ExportPage() {
     <div className="max-w-2xl mx-auto">
       <h1 className="text-2xl font-bold text-slate-800 mb-2">导出学习资料</h1>
       <p className="text-sm text-slate-400 mb-8">
-        将学习内容导出为多种格式{field && ` - 领域: ${field}`}
+        将学习内容导出为多种格式
+        {course && ` - ${course.title || course.description}`}
       </p>
 
       {/* Format selection */}

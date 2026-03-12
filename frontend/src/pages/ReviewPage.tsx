@@ -1,23 +1,22 @@
 import { useEffect, useState } from 'react'
-import { fetchDueCards, reviewCard, exportAnki, fetchAssessment } from '../api/client'
+import { useCourse } from '../contexts/CourseContext'
+import { fetchDueCards, reviewCard } from '../api/client'
 import type { FlashCard as FlashCardType } from '../types'
 import FlashCard from '../components/FlashCard'
 
 export default function ReviewPage() {
+  const { courseId } = useCourse()
   const [cards, setCards] = useState<FlashCardType[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [field, setField] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!courseId) return
     async function load() {
       try {
-        const assessment = await fetchAssessment()
-        if (assessment) setField(assessment.target_field)
-
-        const due = await fetchDueCards()
-        setCards(due)
+        const result = await fetchDueCards(courseId)
+        setCards(result.cards)
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败')
       } finally {
@@ -25,26 +24,17 @@ export default function ReviewPage() {
       }
     }
     load()
-  }, [])
+  }, [courseId])
 
   const handleRate = async (rating: number) => {
     const card = cards[currentIndex]
     if (!card) return
 
     try {
-      await reviewCard(card.id, rating)
+      await reviewCard(courseId, card.id, rating, card.concept_id)
       setCurrentIndex((prev) => prev + 1)
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交评分失败')
-    }
-  }
-
-  const handleExportAnki = async () => {
-    if (!field) return
-    try {
-      await exportAnki(field)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导出失败')
     }
   }
 
@@ -72,28 +62,24 @@ export default function ReviewPage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-800">间隔复习</h1>
           <p className="text-sm text-slate-400 mt-1">
-            基于 SM-2 算法的智能复习系统
+            基于 FSRS 算法的智能复习系统
           </p>
         </div>
-        {field && (
-          <button
-            onClick={handleExportAnki}
-            className="text-sm bg-slate-100 text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-200 transition-colors"
-          >
-            导出 Anki
-          </button>
-        )}
       </div>
 
       {cards.length === 0 || allDone ? (
         <div className="text-center pt-16">
-          <p className="text-4xl mb-4">🎉</p>
+          <div className="w-16 h-16 mx-auto mb-4 text-slate-300">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
           <h2 className="text-xl font-bold text-slate-700 mb-2">
             {cards.length === 0 ? '没有待复习的卡片' : '全部复习完成!'}
           </h2>
           <p className="text-sm text-slate-400">
             {cards.length === 0
-              ? '当前没有到期的闪卡，学习新概念后会自动生成'
+              ? '当前没有到期的闪卡，学习新章节后会自动生成'
               : `本次共复习了 ${cards.length} 张卡片`}
           </p>
         </div>

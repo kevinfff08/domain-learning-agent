@@ -1,11 +1,11 @@
 import type {
   AssessmentRequest,
   AssessmentProfile,
-  KnowledgeGraph,
+  CourseEntry,
+  Textbook,
   ResearchSynthesis,
   VerificationReport,
   ResourceCollection,
-  Quiz,
   QuizResult,
   FlashCard,
   LearnerProgress,
@@ -26,52 +26,16 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json()
 }
 
-// ---- Assessment ----
-
-export async function fetchAssessment(): Promise<AssessmentProfile | null> {
-  try {
-    return await request<AssessmentProfile>('/assessment')
-  } catch {
-    return null
-  }
-}
-
-export async function createAssessment(
-  profile: AssessmentRequest
-): Promise<AssessmentProfile> {
-  return request<AssessmentProfile>('/assessment', {
-    method: 'POST',
-    body: JSON.stringify(profile),
-  })
-}
-
-// ---- Status ----
-
-export async function fetchStatus(): Promise<Record<string, unknown>> {
-  return request<Record<string, unknown>>('/status')
-}
-
-// ---- Knowledge Graph ----
-
-export async function fetchGraph(field: string): Promise<KnowledgeGraph | null> {
-  try {
-    return await request<KnowledgeGraph>(`/graph/${encodeURIComponent(field)}`)
-  } catch {
-    return null
-  }
-}
-
-export function buildGraph(
-  field: string,
+/** Generic SSE stream helper */
+function sseStream(
+  url: string,
   onEvent: (event: SSEEvent) => void,
   onDone?: () => void,
-  onError?: (err: Error) => void
+  onError?: (err: Error) => void,
 ): () => void {
-  const url = `${BASE}/graph/${encodeURIComponent(field)}/build`
   const evtSource = new EventSource(url)
 
-  // Named events from backend
-  const namedEvents = ['step_progress', 'step_start', 'complete', 'error']
+  const namedEvents = ['step_progress', 'step_start', 'step_complete', 'complete', 'error']
   for (const evtName of namedEvents) {
     evtSource.addEventListener(evtName, (e) => {
       try {
@@ -88,13 +52,12 @@ export function buildGraph(
         evtSource.close()
         onError?.(new Error(
           (JSON.parse((e as MessageEvent).data) as { message?: string }).message
-            ?? 'Graph build stream failed'
+            ?? 'Stream failed'
         ))
       }
     })
   }
 
-  // Fallback for unnamed events
   evtSource.onmessage = (e) => {
     try {
       const data = JSON.parse(e.data)
@@ -106,173 +69,155 @@ export function buildGraph(
 
   evtSource.onerror = () => {
     evtSource.close()
-    onError?.(new Error('Graph build stream connection error'))
+    onError?.(new Error('Stream connection error'))
   }
 
   return () => evtSource.close()
 }
 
-// ---- Learning Content ----
-
-export async function fetchContent(
-  conceptId: string
-): Promise<ResearchSynthesis | null> {
-  try {
-    return await request<ResearchSynthesis>(`/learn/${encodeURIComponent(conceptId)}/content`)
-  } catch {
-    return null
-  }
+// ---- Status ----
+export async function fetchStatus(): Promise<Record<string, unknown>> {
+  return request<Record<string, unknown>>('/status')
 }
 
-export function streamLearning(
-  conceptId: string,
-  onEvent: (event: SSEEvent) => void,
-  onDone?: () => void,
-  onError?: (err: Error) => void
-): () => void {
-  const url = `${BASE}/learn/${encodeURIComponent(conceptId)}/stream`
-  const evtSource = new EventSource(url)
-
-  evtSource.onmessage = (e) => {
-    try {
-      const data = JSON.parse(e.data)
-      onEvent({ event: e.type, data })
-    } catch {
-      onEvent({ event: 'message', data: { raw: e.data } })
-    }
-  }
-
-  const stepEvents = [
-    'step_start',
-    'step_complete',
-    'step_progress',
-    'complete',
-    'error',
-  ]
-
-  for (const evtName of stepEvents) {
-    evtSource.addEventListener(evtName, (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data)
-        onEvent({ event: evtName, data })
-      } catch {
-        onEvent({ event: evtName, data: { raw: (e as MessageEvent).data } })
-      }
-      if (evtName === 'complete' || evtName === 'error') {
-        evtSource.close()
-        if (evtName === 'complete') onDone?.()
-        else onError?.(new Error('Learning stream error'))
-      }
-    })
-  }
-
-  evtSource.onerror = () => {
-    evtSource.close()
-    onError?.(new Error('Learning stream connection error'))
-  }
-
-  return () => evtSource.close()
+// ---- Assessment ----
+export async function fetchAssessment(): Promise<AssessmentProfile | null> {
+  try { return await request<AssessmentProfile>('/assessment') } catch { return null }
 }
 
-// ---- Verification ----
-
-export async function fetchVerification(
-  conceptId: string
-): Promise<VerificationReport | null> {
-  try {
-    return await request<VerificationReport>(`/learn/${encodeURIComponent(conceptId)}/verification`)
-  } catch {
-    return null
-  }
-}
-
-// ---- Resources ----
-
-export async function fetchResources(
-  conceptId: string
-): Promise<ResourceCollection | null> {
-  try {
-    return await request<ResourceCollection>(`/learn/${encodeURIComponent(conceptId)}/resources`)
-  } catch {
-    return null
-  }
-}
-
-// ---- Quiz ----
-
-export async function fetchQuiz(conceptId: string): Promise<Quiz> {
-  return request<Quiz>(`/quiz/${encodeURIComponent(conceptId)}`)
-}
-
-export async function submitQuiz(
-  conceptId: string,
-  answers: Record<string, string>
-): Promise<QuizResult> {
-  return request<QuizResult>(`/quiz/${encodeURIComponent(conceptId)}/submit`, {
+export async function createAssessment(profile: AssessmentRequest): Promise<AssessmentProfile> {
+  return request<AssessmentProfile>('/assessment', {
     method: 'POST',
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify(profile),
   })
 }
 
-export async function exportQuiz(conceptId: string): Promise<void> {
-  const res = await fetch(
-    `${BASE}/quiz/${encodeURIComponent(conceptId)}/export`
-  )
-  if (!res.ok) throw new Error('Export failed')
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `quiz_${conceptId}.md`
-  a.click()
-  URL.revokeObjectURL(url)
+// ---- Courses ----
+export async function fetchCourses(): Promise<CourseEntry[]> {
+  const res = await request<{ courses: CourseEntry[] }>('/courses')
+  return res.courses
 }
 
-// ---- Spaced Repetition ----
+export async function createCourse(data: AssessmentRequest): Promise<{ course: CourseEntry; profile: AssessmentProfile }> {
+  return request('/courses', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
+}
 
-export async function fetchDueCards(): Promise<FlashCard[]> {
-  return request<FlashCard[]>('/review/due')
+export async function fetchCourse(courseId: string): Promise<CourseEntry> {
+  return request<CourseEntry>(`/courses/${encodeURIComponent(courseId)}`)
+}
+
+export async function deleteCourse(courseId: string): Promise<void> {
+  await request(`/courses/${encodeURIComponent(courseId)}`, { method: 'DELETE' })
+}
+
+// ---- Textbook ----
+export async function fetchTextbook(courseId: string): Promise<Textbook | null> {
+  try {
+    return await request<Textbook>(`/courses/${encodeURIComponent(courseId)}/textbook`)
+  } catch { return null }
+}
+
+export function buildOutline(
+  courseId: string,
+  onEvent: (event: SSEEvent) => void,
+  onDone?: () => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return sseStream(`${BASE}/courses/${encodeURIComponent(courseId)}/textbook/build`, onEvent, onDone, onError)
+}
+
+export function generateAllChapters(
+  courseId: string,
+  onEvent: (event: SSEEvent) => void,
+  onDone?: () => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return sseStream(`${BASE}/courses/${encodeURIComponent(courseId)}/textbook/generate`, onEvent, onDone, onError)
+}
+
+// ---- Chapters ----
+export async function fetchChapterContent(
+  courseId: string,
+  chapterId: string,
+): Promise<{ synthesis: ResearchSynthesis; resources?: ResourceCollection; verification?: VerificationReport } | null> {
+  try {
+    return await request(`/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}`)
+  } catch { return null }
+}
+
+export function streamChapter(
+  courseId: string,
+  chapterId: string,
+  onEvent: (event: SSEEvent) => void,
+  onDone?: () => void,
+  onError?: (err: Error) => void,
+): () => void {
+  return sseStream(
+    `${BASE}/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/stream`,
+    onEvent, onDone, onError,
+  )
+}
+
+// ---- Quiz (course-scoped) ----
+export async function submitQuiz(
+  courseId: string,
+  chapterId: string,
+  answers: Record<string, string>,
+): Promise<QuizResult> {
+  return request<QuizResult>(
+    `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/quiz/submit`,
+    { method: 'POST', body: JSON.stringify({ answers }) },
+  )
+}
+
+// ---- Spaced Repetition (course-scoped) ----
+export async function fetchDueCards(courseId: string, chapterId?: string): Promise<{ count: number; cards: FlashCard[] }> {
+  let url = `/courses/${encodeURIComponent(courseId)}/review/due`
+  if (chapterId) url += `?chapter_id=${encodeURIComponent(chapterId)}`
+  return request(url)
 }
 
 export async function reviewCard(
+  courseId: string,
   cardId: string,
-  rating: number
-): Promise<FlashCard> {
-  return request<FlashCard>(`/review/${encodeURIComponent(cardId)}`, {
+  rating: number,
+  chapterId: string,
+): Promise<Record<string, unknown>> {
+  return request(`/courses/${encodeURIComponent(courseId)}/review/${encodeURIComponent(cardId)}`, {
     method: 'POST',
-    body: JSON.stringify({ rating }),
+    body: JSON.stringify({ rating, chapter_id: chapterId }),
   })
 }
 
-export async function exportAnki(field: string): Promise<void> {
-  const res = await fetch(`${BASE}/review/export-anki/${encodeURIComponent(field)}`)
-  if (!res.ok) throw new Error('Anki export failed')
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = `anki_${field}.apkg`
-  a.click()
-  URL.revokeObjectURL(url)
+// ---- Progress (course-scoped) ----
+export async function fetchProgress(courseId: string): Promise<LearnerProgress> {
+  return request<LearnerProgress>(`/courses/${encodeURIComponent(courseId)}/progress`)
 }
 
-// ---- Progress ----
-
-export async function fetchProgress(field: string): Promise<LearnerProgress> {
-  return request<LearnerProgress>(`/progress/${encodeURIComponent(field)}`)
-}
-
-// ---- Export ----
-
+// ---- Export (course-scoped) ----
 export async function exportMaterials(
-  field: string,
-  formats: string[]
+  courseId: string,
+  formats: string[],
 ): Promise<Record<string, string>> {
   return request<Record<string, string>>(
-    `/export/${encodeURIComponent(field)}`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ formats }),
-    }
+    `/courses/${encodeURIComponent(courseId)}/export`,
+    { method: 'POST', body: JSON.stringify({ formats }) },
   )
+}
+
+// ---- Socratic dialogue ----
+export async function advanceSocratic(
+  courseId: string,
+  chapterId: string,
+  studentAnswer: string,
+  currentStep: number,
+  dialogue: Record<string, unknown>[],
+): Promise<Record<string, unknown>> {
+  return request(`/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/socratic`, {
+    method: 'POST',
+    body: JSON.stringify({ student_answer: studentAnswer, current_step: currentStep, dialogue }),
+  })
 }

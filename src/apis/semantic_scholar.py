@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.apis.base import BaseAPIClient
-from src.models.knowledge_graph import PaperReference
+from src.models.textbook import PaperReference
 
 
 class SemanticScholarClient(BaseAPIClient):

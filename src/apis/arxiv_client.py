@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 
 from src.apis.base import RateLimiter, ResponseCache
-from src.models.knowledge_graph import PaperReference
+from src.models.textbook import PaperReference
 
 # arXiv API uses Atom XML, not JSON
 ARXIV_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}

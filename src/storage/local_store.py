@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import TypeVar, Type
 
@@ -22,10 +23,7 @@ class LocalStore:
         """Create required directory structure."""
         dirs = [
             self.data_dir / "user",
-            self.data_dir / "graphs",
-            self.data_dir / "content",
-            self.data_dir / "cards",
-            self.data_dir / "exercises",
+            self.data_dir / "courses",
             self.data_dir / "cache",
         ]
         for d in dirs:
@@ -79,21 +77,13 @@ class LocalStore:
             return []
         return sorted(dir_path.glob(pattern))
 
-    # Convenience methods for common data types
+    # --- Legacy convenience methods (kept for backward compat with tests) ---
 
     def save_assessment(self, profile: BaseModel) -> Path:
         return self.save_model("user/assessment_profile.json", profile)
 
     def load_assessment(self, model_class: Type[T]) -> T | None:
         return self.load_model("user/assessment_profile.json", model_class)
-
-    def save_knowledge_graph(self, field: str, graph: BaseModel) -> Path:
-        safe_name = field.lower().replace(" ", "_")
-        return self.save_model(f"graphs/{safe_name}_knowledge_graph.json", graph)
-
-    def load_knowledge_graph(self, field: str, model_class: Type[T]) -> T | None:
-        safe_name = field.lower().replace(" ", "_")
-        return self.load_model(f"graphs/{safe_name}_knowledge_graph.json", model_class)
 
     def save_progress(self, progress: BaseModel) -> Path:
         return self.save_model("user/progress.json", progress)
@@ -106,3 +96,55 @@ class LocalStore:
 
     def load_content(self, concept_id: str, filename: str, model_class: Type[T]) -> T | None:
         return self.load_model(f"content/{concept_id}/{filename}", model_class)
+
+    # --- Course-scoped storage ---
+
+    def save_courses_registry(self, courses: list[dict]) -> Path:
+        """Save the courses registry list."""
+        return self.save_json("courses.json", courses)
+
+    def load_courses_registry(self) -> list[dict]:
+        """Load the courses registry list."""
+        data = self.load_json("courses.json")
+        return data if isinstance(data, list) else []
+
+    def get_course_dir(self, course_id: str) -> Path:
+        """Get the directory path for a course."""
+        return self.data_dir / "courses" / course_id
+
+    def ensure_course_dirs(self, course_id: str) -> None:
+        """Create directory structure for a course."""
+        base = self.get_course_dir(course_id)
+        for sub in ["content", "cards", "quizzes"]:
+            (base / sub).mkdir(parents=True, exist_ok=True)
+
+    def list_courses(self) -> list[str]:
+        """List all course IDs (directory names)."""
+        courses_dir = self.data_dir / "courses"
+        if not courses_dir.exists():
+            return []
+        return sorted(d.name for d in courses_dir.iterdir() if d.is_dir())
+
+    def delete_course(self, course_id: str) -> bool:
+        """Delete a course directory and all its data."""
+        course_dir = self.get_course_dir(course_id)
+        if course_dir.exists():
+            shutil.rmtree(course_dir)
+            return True
+        return False
+
+    def save_course_model(self, course_id: str, relative_path: str, model: BaseModel) -> Path:
+        """Save a Pydantic model within a course directory."""
+        return self.save_model(f"courses/{course_id}/{relative_path}", model)
+
+    def load_course_model(self, course_id: str, relative_path: str, model_class: Type[T]) -> T | None:
+        """Load a Pydantic model from a course directory."""
+        return self.load_model(f"courses/{course_id}/{relative_path}", model_class)
+
+    def save_course_content(self, course_id: str, chapter_id: str, filename: str, model: BaseModel) -> Path:
+        """Save content for a chapter within a course."""
+        return self.save_model(f"courses/{course_id}/content/{chapter_id}/{filename}", model)
+
+    def load_course_content(self, course_id: str, chapter_id: str, filename: str, model_class: Type[T]) -> T | None:
+        """Load content for a chapter within a course."""
+        return self.load_model(f"courses/{course_id}/content/{chapter_id}/{filename}", model_class)

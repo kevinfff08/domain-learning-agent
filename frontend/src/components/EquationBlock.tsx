@@ -1,4 +1,7 @@
 import katex from 'katex'
+import ReactMarkdown from 'react-markdown'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import type { Equation } from '../types'
 
@@ -6,10 +9,19 @@ interface Props {
   equation: Equation
 }
 
+/** Strip surrounding $$ or $ delimiters that LLMs often include. */
+function stripDelimiters(raw: string): string {
+  let s = raw.trim()
+  if (s.startsWith('$$') && s.endsWith('$$')) return s.slice(2, -2).trim()
+  if (s.startsWith('$') && s.endsWith('$')) return s.slice(1, -1).trim()
+  return s
+}
+
 export default function EquationBlock({ equation }: Props) {
+  const latex = stripDelimiters(equation.latex)
   let html = ''
   try {
-    html = katex.renderToString(equation.latex, {
+    html = katex.renderToString(latex, {
       throwOnError: false,
       displayMode: true,
     })
@@ -35,9 +47,13 @@ export default function EquationBlock({ equation }: Props) {
         dangerouslySetInnerHTML={{ __html: html }}
       />
 
-      <p className="text-sm text-slate-600 mt-2 leading-relaxed">
-        {equation.explanation}
-      </p>
+      {equation.explanation && (
+        <div className="text-sm text-slate-600 mt-2 leading-relaxed prose prose-sm max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+            {equation.explanation}
+          </ReactMarkdown>
+        </div>
+      )}
     </div>
   )
 }

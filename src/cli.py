@@ -41,9 +41,8 @@ def _get_orchestrator(**kwargs):
 
 
 @app.command()
-def assess(
+def create(
     field: str = typer.Argument(help="Target field to learn, e.g., 'Diffusion Models'"),
-    quick: bool = typer.Option(True, help="Use quick self-assessment instead of diagnostic quiz"),
     math_level: int = typer.Option(3, min=0, max=5, help="Self-rated math level (0-5)"),
     programming_level: int = typer.Option(3, min=0, max=5, help="Self-rated programming level (0-5)"),
     domain_level: int = typer.Option(0, min=0, max=5, help="Self-rated domain knowledge (0-5)"),
@@ -51,87 +50,98 @@ def assess(
     hours: float = typer.Option(10.0, help="Available hours per week"),
     style: str = typer.Option("intuition_first", help="Learning style: mathematical_first, code_first, intuition_first"),
 ):
-    """Run background assessment and create user profile."""
+    """Create a new course with assessment."""
     orch = _get_orchestrator()
-    profile = asyncio.run(orch.run_assessment(
-        field, quick, math_level, programming_level, domain_level, goal, hours, style,
-    ))
-    console.print(Panel(f"[green]Assessment complete for '{field}'[/green]"))
+    course, profile = orch.create_course(
+        field=field,
+        assessment_data={
+            "math_level": math_level,
+            "programming_level": programming_level,
+            "domain_level": domain_level,
+            "learning_goal": goal,
+            "available_hours": hours,
+            "learning_style": style,
+        },
+    )
+    console.print(Panel(f"[green]Course '{course.id}' created for '{field}'[/green]"))
     console.print(f"  Math: {math_level}/5 | Programming: {programming_level}/5 | Domain: {domain_level}/5")
     console.print(f"  Goal: {goal} | Style: {style} | Hours/week: {hours}")
 
 
 @app.command()
-def map(
-    field: str = typer.Argument(help="Target field (must match assessment)"),
+def outline(
+    course_id: str = typer.Argument(help="Course ID"),
 ):
-    """Build knowledge graph from assessment profile."""
-    from src.models.assessment import AssessmentProfile
-
+    """Build textbook outline for a course."""
     orch = _get_orchestrator()
-    profile = orch.store.load_assessment(AssessmentProfile)
-    if not profile:
-        console.print("[red]No assessment found. Run 'assess' first.[/red]")
-        raise typer.Exit(1)
-
-    graph = asyncio.run(orch.build_knowledge_graph(profile))
-    console.print(f"\n[green]Knowledge graph saved with {len(graph.nodes)} concepts.[/green]")
+    textbook = asyncio.run(orch.build_outline(course_id))
+    console.print(f"\n[green]Textbook outline saved: {len(textbook.chapters)} chapters, "
+                  f"{textbook.total_estimated_hours:.0f} hours[/green]")
 
 
 @app.command()
-def learn(
-    concept: str = typer.Argument(help="Concept ID to learn"),
-    field: str = typer.Option("", help="Field name (auto-detected if omitted)"),
+def generate(
+    course_id: str = typer.Argument(help="Course ID"),
+    chapter: str = typer.Option("", help="Specific chapter ID (all if omitted)"),
 ):
-    """Learn a specific concept (generates content, quiz, exercises)."""
-    from src.models.assessment import AssessmentProfile
-    from src.models.knowledge_graph import KnowledgeGraph
-
+    """Generate content for chapters."""
     orch = _get_orchestrator()
-    profile = orch.store.load_assessment(AssessmentProfile)
-    if not profile:
-        console.print("[red]No assessment found. Run 'assess' first.[/red]")
-        raise typer.Exit(1)
-
-    field_name = field or profile.target_field
-    graph = orch.store.load_knowledge_graph(field_name, KnowledgeGraph)
-    if not graph:
-        console.print("[red]No knowledge graph found. Run 'map' first.[/red]")
-        raise typer.Exit(1)
-
-    result = asyncio.run(orch.learn_concept(concept, graph, profile))
-    if "error" in result:
-        console.print(f"[red]{result['error']}[/red]")
+    if chapter:
+        result = asyncio.run(orch.generate_chapter(course_id, chapter))
+        console.print(f"\n[green]Chapter '{chapter}' generated.[/green]")
     else:
-        console.print(f"\n[green]Content ready for '{concept}'. Take the quiz to proceed.[/green]")
+        asyncio.run(orch.generate_all_chapters(course_id))
+        console.print(f"\n[green]All chapters generated for '{course_id}'.[/green]")
+
+
+@app.command()
+def courses():
+    """List all courses."""
+    orch = _get_orchestrator()
+    course_list = orch.list_courses()
+    if not course_list:
+        console.print("[yellow]No courses found. Create one with 'create'.[/yellow]")
+        return
+
+    table = Table(title="Courses")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title")
+    table.add_column("Status", style="green")
+    table.add_column("Chapters")
+    for c in course_list:
+        table.add_row(
+            c.get("id", ""),
+            c.get("title", ""),
+            c.get("status", ""),
+            f"{c.get('completed_chapters', 0)}/{c.get('total_chapters', 0)}",
+        )
+    console.print(table)
 
 
 @app.command()
 def progress(
-    field: str = typer.Argument(help="Field name"),
+    course_id: str = typer.Argument(help="Course ID"),
 ):
     """Show learning progress."""
+    from src.models.textbook import Textbook
     orch = _get_orchestrator()
-    report = orch.get_weekly_report(field)
+    textbook = orch.store.load_course_model(course_id, "textbook.json", Textbook)
+    if not textbook:
+        console.print("[red]No textbook found for this course.[/red]")
+        raise typer.Exit(1)
+    report = orch.get_weekly_report(textbook.field)
     console.print(report)
 
 
 @app.command()
 def export(
-    field: str = typer.Argument(help="Field name"),
-    formats: str = typer.Option("obsidian", help="Comma-separated: obsidian,anki,html,pdf"),
+    course_id: str = typer.Argument(help="Course ID"),
+    formats: str = typer.Option("obsidian", help="Comma-separated: obsidian,anki,pdf"),
 ):
     """Export learning materials."""
-    from src.models.knowledge_graph import KnowledgeGraph
-
     orch = _get_orchestrator()
-    graph = orch.store.load_knowledge_graph(field, KnowledgeGraph)
-    if not graph:
-        console.print("[red]No knowledge graph found.[/red]")
-        raise typer.Exit(1)
-
     fmt_list = [f.strip() for f in formats.split(",")]
-    results = asyncio.run(orch.export_materials(graph, fmt_list))
+    results = asyncio.run(orch.export_materials(course_id, fmt_list))
     for fmt, path in results.items():
         console.print(f"[green]{fmt}: {path}[/green]")
 
@@ -163,11 +173,9 @@ def status():
     table.add_row("GITHUB_TOKEN", "Set" if os.environ.get("GITHUB_TOKEN") else "Not set (optional)")
     table.add_row("Data directory", str(Path("data").resolve()))
 
-    # Check for existing data
-    store = _get_orchestrator().store
-    from src.models.assessment import AssessmentProfile
-    profile = store.load_assessment(AssessmentProfile)
-    table.add_row("Assessment", "Found" if profile else "Not created")
+    orch = _get_orchestrator()
+    course_list = orch.list_courses()
+    table.add_row("Courses", str(len(course_list)))
 
     console.print(table)
 

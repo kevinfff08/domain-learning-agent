@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import {
   LineChart,
@@ -10,24 +9,21 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts'
-import { fetchAssessment, fetchProgress } from '../api/client'
+import { useCourse } from '../contexts/CourseContext'
+import { fetchProgress } from '../api/client'
 import type { LearnerProgress, ConceptProgress } from '../types'
 
 export default function ProgressPage() {
-  const navigate = useNavigate()
+  const { courseId } = useCourse()
   const [progress, setProgress] = useState<LearnerProgress | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
+    if (!courseId) return
     async function load() {
       try {
-        const assessment = await fetchAssessment()
-        if (!assessment) {
-          navigate('/assess')
-          return
-        }
-        const p = await fetchProgress(assessment.target_field)
+        const p = await fetchProgress(courseId)
         setProgress(p)
       } catch (err) {
         setError(err instanceof Error ? err.message : '加载失败')
@@ -36,7 +32,7 @@ export default function ProgressPage() {
       }
     }
     load()
-  }, [navigate])
+  }, [courseId])
 
   if (loading) {
     return (
@@ -57,8 +53,6 @@ export default function ProgressPage() {
   if (!progress) return null
 
   const completionPct = Math.round(progress.completion_rate * 100)
-
-  // Build chart data from concept quiz scores
   const chartData = buildChartData(progress.concept_progress)
 
   return (
@@ -147,14 +141,14 @@ export default function ProgressPage() {
       {/* Per-concept table */}
       <div className="bg-white rounded-lg border border-slate-200 overflow-hidden mb-8">
         <h3 className="text-sm font-semibold text-slate-700 px-4 py-3 border-b border-slate-100">
-          概念详情
+          章节详情
         </h3>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-slate-50">
               <tr>
                 <th className="text-left px-4 py-2 font-medium text-slate-600">
-                  概念
+                  章节
                 </th>
                 <th className="text-left px-4 py-2 font-medium text-slate-600">
                   状态

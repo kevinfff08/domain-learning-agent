@@ -17,7 +17,7 @@ from src.logging_config import setup_logging, get_logger
 setup_logging()
 logger = get_logger("api")
 
-from src.api.routes import assessment, graph, learning, quiz, review, progress, export
+from src.api.routes import assessment, courses, textbook, quiz, review, progress, export
 
 
 @asynccontextmanager
@@ -46,8 +46,8 @@ app.add_middleware(
 )
 
 app.include_router(assessment.router, prefix="/api", tags=["assessment"])
-app.include_router(graph.router, prefix="/api", tags=["graph"])
-app.include_router(learning.router, prefix="/api", tags=["learning"])
+app.include_router(courses.router, prefix="/api", tags=["courses"])
+app.include_router(textbook.router, prefix="/api", tags=["textbook"])
 app.include_router(quiz.router, prefix="/api", tags=["quiz"])
 app.include_router(review.router, prefix="/api", tags=["review"])
 app.include_router(progress.router, prefix="/api", tags=["progress"])
@@ -59,10 +59,9 @@ def get_status():
     """System status check."""
     import os
     from src.api.deps import get_orchestrator
-    from src.models.assessment import AssessmentProfile
 
     orch = get_orchestrator()
-    profile = orch.store.load_assessment(AssessmentProfile)
+    courses_list = orch.list_courses()
 
     llm_mode = os.environ.get("LLM_MODE", "api-key").strip().lower()
     llm_ready = (
@@ -75,6 +74,5 @@ def get_status():
         "llm_ready": llm_ready,
         "semantic_scholar_api_key": bool(os.environ.get("SEMANTIC_SCHOLAR_API_KEY")),
         "github_token": bool(os.environ.get("GITHUB_TOKEN")),
-        "has_assessment": profile is not None,
-        "target_field": profile.target_field if profile else None,
+        "course_count": len(courses_list),
     }

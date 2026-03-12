@@ -1,27 +1,18 @@
-"""Quiz API routes."""
+"""Quiz API routes (legacy — prefer /courses/{id}/chapters/{id}/quiz/submit)."""
 
 from __future__ import annotations
 
 import json
-from io import StringIO
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from src.api.deps import get_orchestrator
-from src.models.assessment import AssessmentProfile
-from src.models.knowledge_graph import KnowledgeGraph
 from src.models.quiz import Quiz, QuizResult
 from src.orchestrator import LearningOrchestrator
 
 router = APIRouter()
-
-
-class QuizSubmitRequest(BaseModel):
-    """Quiz submission body."""
-    answers: dict[str, str]
-    field: str = ""
 
 
 @router.get("/quiz/{concept_id}")
@@ -29,31 +20,11 @@ def get_quiz(
     concept_id: str,
     orch: LearningOrchestrator = Depends(get_orchestrator),
 ):
-    """Get quiz for a concept."""
+    """Get quiz for a concept/chapter (legacy path)."""
     quiz = orch.store.load_content(concept_id, "quiz.json", Quiz)
     if not quiz:
-        return {"error": f"No quiz found for '{concept_id}'. Learn the concept first."}
+        return {"error": f"No quiz found for '{concept_id}'."}
     return json.loads(quiz.model_dump_json())
-
-
-@router.post("/quiz/{concept_id}/submit")
-async def submit_quiz(
-    concept_id: str,
-    req: QuizSubmitRequest,
-    orch: LearningOrchestrator = Depends(get_orchestrator),
-):
-    """Submit quiz answers and get results with adaptive feedback."""
-    profile = orch.store.load_assessment(AssessmentProfile)
-    if not profile:
-        return {"error": "No assessment found."}
-
-    field_name = req.field or profile.target_field
-    graph = orch.store.load_knowledge_graph(field_name, KnowledgeGraph)
-    if not graph:
-        return {"error": "No knowledge graph found."}
-
-    result = await orch.process_quiz_result(concept_id, graph, profile, req.answers)
-    return result
 
 
 @router.get("/quiz/{concept_id}/result")
@@ -73,14 +44,13 @@ def export_quiz(
     concept_id: str,
     orch: LearningOrchestrator = Depends(get_orchestrator),
 ):
-    """Export quiz as Markdown file with questions and answers."""
+    """Export quiz as Markdown file."""
     quiz = orch.store.load_content(concept_id, "quiz.json", Quiz)
     if not quiz:
         return {"error": f"No quiz found for '{concept_id}'."}
 
     result = orch.store.load_content(concept_id, "quiz_result.json", QuizResult)
 
-    # Build Markdown content
     lines = [f"# Quiz: {concept_id}\n"]
     lines.append(f"Total questions: {len(quiz.questions)}\n")
     if result:
@@ -108,7 +78,6 @@ def export_quiz(
                 lines.append(f"- {step}")
             lines.append("")
 
-        # Include user's result if available
         if result:
             r = next((r for r in result.results if r.question_id == q.id), None)
             if r:

@@ -21,13 +21,12 @@ from src.models.content import (
     ResearchSynthesis,
     SourceAttribution,
 )
-from src.models.knowledge_graph import (
-    ConceptNode,
-    ConceptStatus,
-    EdgeType,
-    GraphEdge,
-    KnowledgeGraph,
+from src.models.course import Course, CourseStatus
+from src.models.textbook import (
+    Chapter,
+    ChapterStatus,
     PaperReference,
+    Textbook,
 )
 from src.models.progress import ConceptProgress, LearnerProgress, WeeklyStats
 from src.models.quiz import (
@@ -69,12 +68,12 @@ __all__ = [
     "PracticeLayer",
     "ResearchSynthesis",
     "SourceAttribution",
-    "ConceptNode",
-    "ConceptStatus",
-    "EdgeType",
-    "GraphEdge",
-    "KnowledgeGraph",
+    "Course",
+    "CourseStatus",
+    "Chapter",
+    "ChapterStatus",
     "PaperReference",
+    "Textbook",
     "ConceptProgress",
     "LearnerProgress",
     "WeeklyStats",

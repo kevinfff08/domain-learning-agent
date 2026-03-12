@@ -1,3 +1,54 @@
+// Course
+export interface CourseEntry {
+  id: string
+  title: string
+  description: string
+  status: 'created' | 'outline_ready' | 'generating' | 'active' | 'completed'
+  created_at: string
+  updated_at: string
+  last_accessed: string | null
+  total_chapters: number
+  completed_chapters: number
+}
+
+// Textbook & Chapters
+export interface Chapter {
+  id: string
+  chapter_number: number
+  title: string
+  description: string
+  difficulty: number
+  estimated_hours: number
+  status: 'pending' | 'generating' | 'ready' | 'in_progress' | 'completed'
+  mastery: number
+  has_content: boolean
+  quiz_score: number | null
+  tags: string[]
+  key_topics: string[]
+}
+
+export interface Textbook {
+  course_id: string
+  field: string
+  title: string
+  chapters: Chapter[]
+  survey_papers: PaperReference[]
+  total_estimated_hours: number
+  created_at: string
+  updated_at: string
+}
+
+export interface PaperReference {
+  arxiv_id: string
+  doi: string
+  title: string
+  authors: string[]
+  year: number
+  venue: string
+  citation_count: number
+  role: string
+}
+
 // Assessment - request shape (what we POST)
 export interface AssessmentRequest {
   field: string
@@ -23,94 +74,105 @@ export interface AssessmentProfile {
   updated_at?: string
 }
 
-// Knowledge Graph
-export interface ConceptNode {
-  id: string
-  name: string
-  description: string
-  difficulty: number
-  status: 'pending' | 'in_progress' | 'completed'
-  mastery_level: number
-  prerequisites: string[]
-  category?: string
-}
-
-export interface GraphEdge {
-  source: string
-  target: string
-  relationship: string
-  weight: number
-}
-
-export interface KnowledgeGraph {
-  field: string
-  nodes: ConceptNode[]
-  edges: GraphEdge[]
-  created_at?: string
-}
-
 // Research Synthesis - Three Layer Content
+// Must match backend: src/models/content.py
+
 export interface Equation {
   name: string
   latex: string
   explanation: string
+  derivation_steps?: string[]
   source_paper?: string
+  source_equation_ref?: string
 }
 
 export interface IntuitionLayer {
   analogy: string
-  visual_description: string
+  why_it_matters: string
   key_insight: string
-  eli5: string
-  mental_model: string
+  estimated_reading_minutes?: number
+}
+
+export interface AlgorithmBlock {
+  name: string
+  inputs: string[]
+  outputs: string[]
+  steps: string[]
+  source_paper?: string
 }
 
 export interface MechanismLayer {
-  math_framework: string
-  equations: Equation[]
+  theoretical_narrative: string
+  mathematical_framework: string
+  key_equations: Equation[]
+  algorithms: AlgorithmBlock[]
   pseudocode: string
   algorithm_steps: string[]
-  complexity_analysis?: string
+  connections?: { target_concept_id: string; relationship: string }[]
+  estimated_reading_minutes?: number
 }
 
 export interface Resource {
-  title: string
   url: string
-  type: string
+  title: string
+  resource_type: string
+  source?: string
+  quality_score?: number
   difficulty: string
   description?: string
+  arxiv_id?: string
+  citation_count?: number
+  github_stars?: number
+  language?: string
+  framework?: string
+}
+
+export interface CodeAnalysis {
+  title: string
+  language: string
+  source_url?: string
+  code: string
+  line_annotations: string[]
+  key_design_decisions: string[]
 }
 
 export interface PracticeLayer {
-  reference_implementations: Resource[]
-  hyperparameters: Record<string, string>
+  code_analysis: CodeAnalysis[]
+  reference_implementations: string[]
+  key_hyperparameters: Record<string, string>
   common_pitfalls: string[]
   reproduction_checklist: string[]
-  exercises?: string[]
+  estimated_reading_minutes?: number
 }
 
 export interface ResearchSynthesis {
   concept_id: string
-  concept_name: string
+  title: string
   intuition: IntuitionLayer
   mechanism: MechanismLayer
   practice: PracticeLayer
+  sources?: { title: string; url?: string; source_type?: string; role?: string }[]
   generated_at?: string
+  verified?: boolean
 }
 
-// Verification
+// Verification — matches backend: src/models/verification.py
 export interface VerificationCheck {
+  check_type: string
   claim: string
-  source: string
-  status: 'verified' | 'unverified' | 'disputed'
+  source_paper: string
+  result: 'verified' | 'warning' | 'error' | 'unverifiable'
+  details: string
   confidence: number
-  notes?: string
 }
 
 export interface VerificationReport {
+  id: string
   concept_id: string
   checks: VerificationCheck[]
-  overall_confidence: number
+  hallucination_risk_score: number
+  flagged_items: string[]
+  overall_status: string
   verified_at?: string
 }
 
@@ -191,10 +253,14 @@ export interface LearnerProgress {
   streak_days: number
 }
 
-// Resources
+// Resources — matches backend: src/models/resources.py
 export interface ResourceCollection {
   concept_id: string
-  resources: Resource[]
+  papers: Resource[]
+  blogs: Resource[]
+  videos: Resource[]
+  code: Resource[]
+  courses: Resource[]
   curated_at?: string
 }
 

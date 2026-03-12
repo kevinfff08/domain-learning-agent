@@ -1,371 +1,409 @@
-# Domain Learning Agent
+# NewLearner
 
-A PhD-level AI research domain learning system with 12 agent skills. Designed for researchers entering new frontier AI fields (e.g., Diffusion Models, Flow Matching, Neural ODEs), this system provides structured, adaptive, and verified learning paths.
+PhD 级 AI 研究领域自学系统。输入一个研究领域，系统自动搜索学术论文、生成教材大纲、为每章生成深度三层内容（直觉 → 机制 → 实践），并通过测验、间隔重复和自适应控制持续巩固学习。
 
-## Features
+## 功能特性
 
-- **Multi-dimensional assessment** - Goes beyond 0-5 self-rating with diagnostic questions covering math, programming, and domain knowledge
-- **Dynamic knowledge graph** - Builds and updates a concept dependency graph from academic sources (Semantic Scholar, arXiv, OpenAlex)
-- **PhD-level content synthesis** - Three-layer architecture: Intuition (analogies), Mechanism (math derivations with source attribution), Practice (implementation guides)
-- **Accuracy verification** - Anti-hallucination pipeline checking citation existence, math consistency, performance claims, and attribution
-- **Adaptive learning** - 4-level intervention when concepts aren't understood (alternative explanation -> prerequisite review -> concept splitting -> Socratic dialogue)
-- **Spaced repetition** - SM-2 algorithm with Anki deck export
-- **Interactive practice** - Jupyter notebooks, coding challenges, paper reproduction guides
-- **Progress tracking** - Mastery metrics, weekly reports, knowledge graph visualization
-- **Multi-format export** - Obsidian vault, Anki `.apkg`, D3.js interactive HTML, PDF
+- **多课程管理** — 创建、切换、删除不同领域的学习课程
+- **智能教材生成** — 多源搜索（Tavily 网络搜索 + OpenAlex/arXiv 论文），LLM 结合论文、教程、博客生成 15-30 章教材大纲
+- **三层内容体系** — 每章包含直觉层（深度类比/核心洞察/重要性分析）、机制层（连续数学叙述/严格推导/学术算法块）、实践层（代码分析/逐行注释/设计决策/超参数指南）
+- **准确性验证** — 自动交叉验证生成内容的关键声明
+- **自适应学习** — 根据测验表现动态调整内容难度和解释方式
+- **间隔重复 (FSRS)** — 基于 FSRS-6 算法的闪卡复习系统
+- **多格式导出** — Obsidian 笔记库、Anki 卡组、PDF
 
-## Architecture
+## 技术栈
 
-```
-12 Skills across 4 Layers:
+| 层 | 技术 |
+|---|---|
+| 后端 | Python 3.14, FastAPI, Pydantic v2, SSE |
+| 前端 | React, TypeScript, Vite, Tailwind CSS |
+| LLM | Anthropic Claude API |
+| 资料搜索 | Tavily (主, 网络搜索), OpenAlex + arXiv (学术论文 fallback) |
+| 间隔重复 | FSRS-6 算法 |
 
-Layer 1: Assessment & Planning
-  [1] Pre-Assessor      - Multi-dimensional diagnostic assessment
-  [2] Domain Mapper      - Multi-source knowledge graph construction
-  [3] Path Visualizer    - Learning path visualization (D3.js + ASCII)
+## 快速开始
 
-Layer 2: Knowledge Construction & Verification
-  [4] Deep Researcher    - PhD-level three-layer content synthesis
-  [5] Accuracy Verifier  - Citation/math/claims verification
-  [6] Resource Curator   - Papers, blogs, videos, code, courses
-
-Layer 3: Learning Delivery & Adaptation
-  [7] Quiz Engine        - Multi-type questions with Bloom's taxonomy
-  [8] Adaptive Controller - 4-level "can't understand" intervention
-  [9] Spaced Repetition  - SM-2 algorithm + Anki export
-  [10] Practice Generator - Notebooks, challenges, reproduction guides
-
-Layer 4: Output & Tracking
-  [11] Progress Tracker  - Metrics, weekly reports, dashboard
-  [12] Material Integrator - Obsidian/PDF/HTML export
-```
-
-## Prerequisites
-
-- Python 3.14+
-- Node.js 18+ (for web frontend)
-- Conda (recommended)
-- Anthropic API key **or** Claude subscription + [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
-
-## Installation
+### 环境准备
 
 ```bash
-# Create conda environment
+# 创建 conda 环境
 conda create -n research_tools python=3.14
 conda activate research_tools
 
-# Clone and install Python backend
-git clone https://github.com/kevinfff08/domain-learning-agent.git
-cd domain-learning-agent
+# 安装后端
 pip install -e ".[dev]"
 
-# Install frontend dependencies
-cd frontend
-npm install
-cd ..
-
-# Configure environment
-cp .env.example .env
-# Edit .env and set ANTHROPIC_API_KEY
+# 安装前端
+cd frontend && npm install
 ```
 
-## Configuration
+### 配置 API Key
 
-Copy the example environment file and choose your LLM connection mode:
+在项目根目录创建 `.env` 文件：
 
-```bash
-cp .env.example .env
+```env
+ANTHROPIC_API_KEY=sk-ant-...        # 必需
+TAVILY_API_KEY=tvly-...              # 推荐，大纲生成时搜索教程/论文
+SEMANTIC_SCHOLAR_API_KEY=...         # 可选，提高速率限制
+GITHUB_TOKEN=...                     # 可选
 ```
 
-### Mode A: API Key (default)
+### LLM 连接模式
 
-Set `LLM_MODE=api-key` in `.env` and fill in your Anthropic API key:
+**Mode A: API Key（默认）**
 
 ```env
 LLM_MODE=api-key
 ANTHROPIC_API_KEY=sk-ant-api03-...
 ```
 
-> **Note**: The Anthropic API requires a separate key from [console.anthropic.com](https://console.anthropic.com). A Claude Pro/Max subscription does **not** include API access.
+**Mode B: Setup Token（Claude 订阅用户）**
 
-### Mode B: Setup Token (Claude subscription)
-
-If you have a Claude Pro/Max subscription and don't want to pay for separate API credits, you can route requests through [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI):
+通过 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 代理请求：
 
 ```env
 LLM_MODE=setup-token
 LLM_PROXY_URL=http://localhost:8317
 ```
 
-Setup:
-1. Install CLIProxyAPI: `brew install cliproxyapi` (macOS) or see the project README
-2. Authenticate: `cliproxyapi --claude-login`
-3. The startup script (`start.bat` / `start.sh`) will automatically launch the proxy
+### 所有 `.env` 字段
 
-### All `.env` fields
+| 变量 | 必需 | 说明 |
+|------|------|------|
+| `LLM_MODE` | 否 | `api-key`（默认）或 `setup-token` |
+| `ANTHROPIC_API_KEY` | api-key 模式 | 从 [console.anthropic.com](https://console.anthropic.com) 获取 |
+| `LLM_PROXY_URL` | 否 | setup-token 模式的代理地址（默认 `http://localhost:8317`） |
+| `TAVILY_API_KEY` | 否 | 网络搜索（教程/博客/论文），从 [tavily.com](https://tavily.com) 获取，免费 1000 次/月 |
+| `SEMANTIC_SCHOLAR_API_KEY` | 否 | 提高论文搜索速率限制 |
+| `GITHUB_TOKEN` | 否 | 仓库质量指标 |
+| `LLM_MODEL` | 否 | 覆盖默认模型（默认 `claude-sonnet-4-20250514`） |
+| `API_HOST` | 否 | 后端地址（默认 `127.0.0.1`） |
+| `API_PORT` | 否 | 后端端口（默认 `8000`） |
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `LLM_MODE` | No | `api-key` (default) or `setup-token` |
-| `ANTHROPIC_API_KEY` | api-key mode | Get from [console.anthropic.com](https://console.anthropic.com) |
-| `LLM_PROXY_URL` | No | Proxy URL for setup-token mode (default: `http://localhost:8317`) |
-| `SEMANTIC_SCHOLAR_API_KEY` | No | Higher rate limits for paper search |
-| `GITHUB_TOKEN` | No | Repository quality metrics |
-| `LLM_MODEL` | No | Override default model (default: `claude-sonnet-4-20250514`) |
-| `API_HOST` | No | Backend host (default: `127.0.0.1`) |
-| `API_PORT` | No | Backend port (default: `8000`) |
+### 启动服务
 
-## Usage
-
-### Web Interface (Recommended)
-
-The web frontend provides an interactive learning experience with real-time content streaming.
-
-**One-click startup:**
+**一键启动：**
 
 ```bash
 # Windows
 start.bat
 
-# Linux / macOS / WSL
+# Linux / macOS
 ./start.sh
 ```
 
-This automatically starts the backend API, frontend dev server, and CLIProxyAPI proxy (if using setup-token mode).
-
-**Or start manually:**
+**手动启动：**
 
 ```bash
-# Terminal 1: backend
+# 终端 1: 后端
 conda activate research_tools
-uvicorn src.api.app:app --reload --port 8000
+uvicorn src.api.app:app --reload --reload-exclude data --reload-exclude output --reload-exclude logs --port 8000
 
-# Terminal 2: frontend
+# 终端 2: 前端
 cd frontend
 npm run dev
 ```
 
-Open http://localhost:5173 in your browser.
+打开 http://localhost:5173 访问 Web 界面。
 
-**Web UI features:**
-- Real-time progress tracking during content generation (SSE streaming)
-- Three-layer content rendering with LaTeX math (KaTeX) and syntax-highlighted code
-- Interactive knowledge graph visualization (D3.js force-directed)
-- Interactive quiz with immediate feedback + downloadable quiz files (with answers)
-- Flashcard review with 3D flip animation and SM-2 scheduling
-- Progress dashboard with charts
-- Multi-format export (Obsidian, Anki, PDF, HTML)
+## Web 界面功能
 
-### CLI Commands
+- 课程列表与管理（创建/切换/删除）
+- 教材大纲预览与编号章节导航
+- 实时内容生成进度（SSE 流式传输）
+- 三层内容渲染（KaTeX 数学公式 + 语法高亮代码）
+- 章节测验与即时反馈
+- 闪卡复习（3D 翻转动画 + FSRS 调度）
+- 学习进度仪表盘
+- 多格式导出（Obsidian、Anki、PDF）
+
+## CLI 命令
 
 ```bash
-# 1. Run assessment for a target field
-newlearner assess "Diffusion Models" --math-level 4 --programming-level 3 --goal reproduce_papers
+# 创建课程（含学习者评估）
+newlearner create "Diffusion Models" --math-level 4 --programming-level 4
 
-# 2. Build knowledge graph
-newlearner map "Diffusion Models"
+# 生成教材大纲
+newlearner outline diffusion_models
 
-# 3. Learn a specific concept
-newlearner learn ddpm
+# 生成章节内容
+newlearner generate diffusion_models                    # 全部章节
+newlearner generate diffusion_models --chapter ch01     # 单章
 
-# 4. View progress
-newlearner progress "Diffusion Models"
+# 查看课程列表
+newlearner courses
 
-# 5. Export materials
-newlearner export "Diffusion Models" --formats "obsidian,anki,html"
+# 查看学习进度
+newlearner progress diffusion_models
 
-# 6. Review flashcards
+# 复习闪卡
 newlearner review
 
-# 7. Check system status
+# 导出材料
+newlearner export diffusion_models --formats obsidian,anki
+
+# 系统状态
 newlearner status
 ```
 
-### Complete Workflow
+## 系统架构
 
 ```
-User: "I want to learn Diffusion Models"
-        |
-        v
-[1. Pre-Assessor] --> assessment_profile.json
-        |
-        v
-[2. Domain Mapper] --> knowledge_graph.json (30+ concepts)
-        |
-        v
-[3. Path Visualizer] --> Interactive D3.js map + ASCII overview
-        |
-        v
-=== Concept Loop (for each concept in learning_path) ===
-        |
-        v
-[4. Deep Researcher] --> Three-layer PhD content
-        |
-        v
-[5. Accuracy Verifier] --> Hallucination risk score
-        |                   (risk > 0.3 = human review)
-        |
-[6. Resource Curator] --> Papers, blogs, code repos
-        |
-        v
-[7. Quiz Engine] --> Multi-type assessment
-        |
-        |-- score >= 70% --> [9] Anki cards + [10] Practice --> Next concept
-        |-- score 40-60% --> [8 L1] Alternative explanation --> Re-quiz
-        |-- score < 40%  --> [8 L2] Prerequisite review --> Update graph
-        |-- persistent   --> [8 L3/4] Concept split / Socratic dialogue
-=== End Loop ===
-        |
-        v
-[11. Progress Tracker] --> Weekly reports + dashboard
-[12. Material Integrator] --> Obsidian vault / PDF / HTML
-[9. Spaced Repetition] --> Daily review reminders
+用户评估 → 教材大纲生成 → 章节内容生成 → 测验与复习
+   │              │              │              │
+Pre-Assessor  Textbook      5-step         Quiz Engine
+              Planner       Pipeline       Spaced Rep (FSRS)
+                │                          Adaptive Controller
+          Tavily (教程/博客)
+          + OpenAlex/arXiv (论文)
+          + LLM 生成大纲
 ```
 
-## Project Structure
+### 11 个 Skill（4 层）
+
+| 层 | Skill | 职责 |
+|---|---|---|
+| 1 评估与规划 | Pre-Assessor | 学习者背景多维诊断 |
+| | Textbook Planner | 多源搜索（Tavily + 论文）+ LLM 生成教材大纲 |
+| 2 知识构建与验证 | Deep Researcher | 三层内容生成（3 次专用 LLM 调用：机制→直觉+实践并行） |
+| | Accuracy Verifier | 关键声明交叉验证 |
+| | Resource Curator | 补充资源推荐（论文/代码/教程） |
+| 3 学习交付与适应 | Quiz Engine | 章节测验生成与评分 |
+| | Adaptive Controller | 自适应难度调整 |
+| | Spaced Repetition | FSRS-6 闪卡复习调度 |
+| | Practice Generator | 练习题与编程挑战 |
+| 4 输出与追踪 | Progress Tracker | 学习进度追踪与报告 |
+| | Material Integrator | Obsidian/Anki/PDF 导出 |
+
+### 章节内容生成管道（5 步）
+
+```
+Chapter → Deep Researcher → Accuracy Verifier → Resource Curator → Quiz Engine → Practice Generator
+            │                    │                   │                 │              │
+         三层内容           声明验证            资源推荐          章节测验        练习题
+```
+
+支持**一键批量生成全部章节**和**按需逐章生成**两种模式。
+
+### 完整学习流程
+
+```
+用户: "我要学 Diffusion Models"
+        |
+        v
+[Pre-Assessor] → assessment_profile.json（数学/编程/领域水平）
+        |
+        v
+[Textbook Planner] → textbook.json（搜索教程/博客/论文 + LLM 生成 15-30 章大纲）
+        |
+        v
+=== 章节循环 ===
+        |
+[Deep Researcher] → 三层 PhD 级内容
+[Accuracy Verifier] → 验证关键声明
+[Resource Curator] → 补充资源
+[Quiz Engine] → 章节测验
+        |
+        |-- 分数 >= 70% → 通过，生成闪卡 + 练习题 → 下一章
+        |-- 分数 < 70%  → Adaptive Controller 介入
+        |                  L1: 换种方式解释
+        |                  L2: 苏格拉底式对话
+=== 循环结束 ===
+        |
+        v
+[Progress Tracker] → 进度报告
+[Spaced Repetition] → FSRS 闪卡复习
+[Material Integrator] → Obsidian / Anki / PDF 导出
+```
+
+## 项目结构
 
 ```
 NewLearner/
-├── pyproject.toml             # Project config & dependencies
-├── .env.example               # Environment variable template
-├── start.bat                  # One-click startup (Windows)
-├── start.sh                   # One-click startup (Linux/macOS)
-├── CLAUDE.md                  # Claude Code project instructions
+├── pyproject.toml             # 项目配置与依赖
+├── .env.example               # 环境变量模板
+├── start.bat / start.sh       # 一键启动脚本
+├── CLAUDE.md                  # Claude Code 项目指令
 │
-├── frontend/                  # React web frontend
+├── frontend/                  # React Web 前端
 │   ├── package.json
-│   ├── vite.config.ts         # Vite config (proxy /api → backend)
+│   ├── vite.config.ts         # Vite 配置（/api 代理至后端）
 │   └── src/
-│       ├── App.tsx            # Routes
-│       ├── api/client.ts      # REST + SSE API client
-│       ├── pages/             # 8 page components
-│       │   ├── HomePage.tsx
-│       │   ├── AssessmentPage.tsx
-│       │   ├── KnowledgeGraphPage.tsx
-│       │   ├── LearningPage.tsx       # Core: SSE streaming content
+│       ├── App.tsx            # 路由
+│       ├── api/client.ts      # REST + SSE API 客户端
+│       ├── contexts/          # React Context
+│       │   └── CourseContext.tsx
+│       ├── pages/             # 页面组件
+│       │   ├── CoursesPage.tsx       # 课程列表（首页）
+│       │   ├── NewCoursePage.tsx      # 创建课程
+│       │   ├── TextbookPage.tsx       # 教材大纲
+│       │   ├── ChapterPage.tsx        # 章节阅读
 │       │   ├── QuizPage.tsx
 │       │   ├── ReviewPage.tsx
 │       │   ├── ProgressPage.tsx
 │       │   └── ExportPage.tsx
-│       └── components/        # Reusable UI components
-│           ├── KnowledgeGraph.tsx     # D3.js force-directed graph
-│           ├── ContentRenderer.tsx    # Three-layer content + KaTeX
-│           ├── FlashCard.tsx          # 3D flip card
-│           └── ...
+│       ├── components/        # 可复用组件
+│       │   ├── Layout.tsx
+│       │   ├── Sidebar.tsx
+│       │   ├── CourseLayout.tsx
+│       │   ├── ContentRenderer.tsx    # 三层内容 + KaTeX
+│       │   ├── FlashCard.tsx
+│       │   └── ...
+│       └── types/index.ts     # TypeScript 类型定义
 │
-├── skills/                    # SKILL.md files for Claude Code integration
+├── skills/                    # Claude Code SKILL.md 文件
 │   ├── pre-assessor/
-│   ├── domain-mapper/
-│   ├── ...
-│   └── material-integrator/
+│   ├── textbook-planner/
+│   ├── deep-researcher/
+│   └── ...
 │
 ├── src/
-│   ├── cli.py                 # Typer CLI entry point
-│   ├── orchestrator.py        # Workflow engine (wires 12 skills)
-│   ├── api/                   # FastAPI backend
-│   │   ├── app.py             # App config, CORS, routers
-│   │   ├── deps.py            # Dependency injection
-│   │   └── routes/            # API endpoints
-│   │       ├── assessment.py  # POST/GET /api/assessment
-│   │       ├── graph.py       # Graph build (SSE) + query
-│   │       ├── learning.py    # Content stream (SSE) + retrieval
-│   │       ├── quiz.py        # Quiz interaction + export
-│   │       ├── review.py      # Spaced repetition + Anki export
-│   │       ├── progress.py    # Progress metrics
-│   │       └── export.py      # Multi-format export
-│   ├── models/                # Pydantic v2 data models
-│   │   ├── assessment.py      # AssessmentProfile, DiagnosticQuestion
-│   │   ├── knowledge_graph.py # KnowledgeGraph, ConceptNode, GraphEdge
-│   │   ├── content.py         # ResearchSynthesis (3-layer architecture)
-│   │   ├── quiz.py            # Quiz, QuizResult (Bloom's taxonomy)
-│   │   ├── cards.py           # FlashCard, SM2State
-│   │   ├── progress.py        # LearnerProgress, ConceptProgress
+│   ├── cli.py                 # Typer CLI 入口
+│   ├── orchestrator.py        # 工作流引擎（编排 11 个 skill）
+│   ├── logging_config.py      # 日志配置
+│   │
+│   ├── api/                   # FastAPI 后端
+│   │   ├── app.py             # 应用配置、CORS、路由注册
+│   │   ├── deps.py            # 依赖注入
+│   │   └── routes/
+│   │       ├── courses.py     # 课程 CRUD
+│   │       ├── textbook.py    # 教材/章节/测验/复习/进度/导出
+│   │       ├── assessment.py  # 评估
+│   │       ├── quiz.py        # 测验（legacy）
+│   │       ├── review.py      # 复习（legacy）
+│   │       ├── progress.py    # 进度（legacy）
+│   │       └── export.py      # 导出（legacy）
+│   │
+│   ├── models/                # Pydantic v2 数据模型
+│   │   ├── course.py          # Course, CourseStatus
+│   │   ├── textbook.py        # Textbook, Chapter, ChapterStatus, PaperReference
+│   │   ├── assessment.py      # AssessmentProfile
+│   │   ├── content.py         # ResearchSynthesis（三层内容）
+│   │   ├── quiz.py            # Quiz, QuizResult
+│   │   ├── cards.py           # FlashCard, FSRSState
+│   │   ├── progress.py        # LearnerProgress
 │   │   ├── resources.py       # ResourceCollection
-│   │   └── verification.py    # VerificationReport, VerificationCheck
-│   ├── skills/                # 12 skill implementations
-│   ├── apis/                  # Academic API clients
+│   │   └── verification.py    # VerificationReport
+│   │
+│   ├── skills/                # 11 个 Skill 实现
+│   │   ├── pre_assessor.py
+│   │   ├── textbook_planner.py    # 论文搜索 + LLM 大纲生成
+│   │   ├── deep_researcher.py
+│   │   ├── accuracy_verifier.py
+│   │   ├── resource_curator.py
+│   │   ├── quiz_engine.py
+│   │   ├── adaptive_controller.py
+│   │   ├── spaced_repetition.py   # FSRS-6 算法
+│   │   ├── practice_generator.py
+│   │   ├── progress_tracker.py
+│   │   └── material_integrator.py
+│   │
+│   ├── apis/                  # 学术 API 客户端
 │   │   ├── base.py            # RateLimiter, ResponseCache, BaseAPIClient
+│   │   ├── tavily_client.py    # Tavily（主要搜索：教程/博客/论文）
+│   │   ├── open_alex.py       # OpenAlex（学术论文 fallback）
+│   │   ├── arxiv_client.py    # arXiv（学术论文 fallback）
 │   │   ├── semantic_scholar.py
-│   │   ├── arxiv_client.py
 │   │   ├── crossref.py
-│   │   ├── open_alex.py
 │   │   ├── papers_with_code.py
 │   │   └── github_client.py
-│   ├── llm/                   # Anthropic API wrapper
-│   │   └── client.py
-│   ├── storage/               # JSON file persistence
-│   │   └── local_store.py
-│   └── export/                # Output format generators
+│   │
+│   ├── llm/                   # LLM 交互层
+│   │   └── client.py          # Anthropic API / CLIProxyAPI
+│   │
+│   └── storage/               # 持久化
+│       └── local_store.py     # 课程作用域 JSON 文件存储
 │
-├── templates/                 # Jinja2 templates
-├── data/                      # Runtime data (gitignored)
-├── output/                    # Generated materials (gitignored)
-└── tests/                     # Test suite (76 tests)
+├── templates/                 # Jinja2 导出模板
+├── data/                      # 运行时数据（gitignored）
+├── logs/                      # 日志文件（gitignored）
+└── tests/                     # pytest 测试套件
 ```
 
-## Data Models
+## 数据存储
 
-All skills communicate through Pydantic v2 models that serve as data contracts:
-
-| Model | File | Purpose |
-|-------|------|---------|
-| `AssessmentProfile` | `assessment.py` | Multi-dimensional learner profile |
-| `KnowledgeGraph` | `knowledge_graph.py` | Concept dependency graph with mastery tracking |
-| `ResearchSynthesis` | `content.py` | Three-layer content (intuition/mechanism/practice) |
-| `Quiz` / `QuizResult` | `quiz.py` | Bloom's taxonomy questions with scoring |
-| `FlashCard` / `SM2State` | `cards.py` | Spaced repetition with SM-2 algorithm |
-| `LearnerProgress` | `progress.py` | Per-concept and aggregate progress metrics |
-| `ResourceCollection` | `resources.py` | Curated papers, blogs, videos, code, courses |
-| `VerificationReport` | `verification.py` | Accuracy checks with hallucination risk score |
-
-## API Integrations
-
-| API | Usage | Skills |
-|-----|-------|--------|
-| Semantic Scholar | Paper search, citations, metadata | 2, 5, 6 |
-| arXiv | Paper search, PDF access | 2, 4 |
-| CrossRef | DOI verification, citation validation | 5 |
-| OpenAlex | Subject classification, trends | 2 |
-| Papers With Code | Paper-to-code mapping | 6, 10 |
-| GitHub | Repository quality metrics | 6 |
-| Anthropic Claude | All LLM reasoning and generation | All skills |
-
-## Testing
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=src
-
-# Run specific test module
-pytest tests/test_models/test_cards.py
-
-# Run only unit tests (skip integration)
-pytest -m "not integration"
+```
+data/
+  courses.json                              # 课程注册表
+  courses/{course_id}/
+    course.json                             # 课程元数据
+    assessment_profile.json                 # 学习者画像
+    textbook.json                           # 教材大纲（章节列表）
+    progress.json                           # 学习进度
+    content/{chapter_id}/
+      research_synthesis.json               # 三层章节内容
+      resources.json                        # 资源推荐
+      verification_report.json              # 验证报告
+    cards/{chapter_id}/cards.json           # FSRS 闪卡
+    quizzes/{chapter_id}/quiz.json          # 章节测验
+  cache/                                    # 共享 API 缓存
 ```
 
-Test coverage includes:
-- Data model validation and computed properties
-- SM-2 spaced repetition algorithm correctness
-- Adaptive controller state machine transitions
-- Storage layer round-trip serialization
-- Path visualization output generation
-- Progress tracking with graph synchronization
+## 数据模型
 
-## Development
+所有 Skill 通过 Pydantic v2 模型通信：
+
+| 模型 | 文件 | 说明 |
+|------|------|------|
+| `Course` | `course.py` | 课程元数据与状态 |
+| `Textbook` / `Chapter` | `textbook.py` | 教材大纲与章节定义 |
+| `AssessmentProfile` | `assessment.py` | 学习者多维画像 |
+| `ResearchSynthesis` | `content.py` | 三层内容（直觉/机制/实践）+ AlgorithmBlock + CodeAnalysis |
+| `Quiz` / `QuizResult` | `quiz.py` | 测验题目与评分结果 |
+| `FlashCard` / `FSRSState` | `cards.py` | FSRS 闪卡与复习状态 |
+| `LearnerProgress` | `progress.py` | 章节与整体进度指标 |
+| `ResourceCollection` | `resources.py` | 论文/博客/视频/代码/教程 |
+| `VerificationReport` | `verification.py` | 准确性验证报告 |
+
+## API 接口
+
+```
+GET/POST        /api/courses                           课程 CRUD
+GET/DELETE      /api/courses/{id}
+GET             /api/courses/{id}/textbook              教材大纲
+GET (SSE)       /api/courses/{id}/textbook/build        生成大纲（流式）
+GET (SSE)       /api/courses/{id}/textbook/generate     批量生成章节（流式）
+GET             /api/courses/{id}/chapters/{ch}          章节内容
+GET (SSE)       /api/courses/{id}/chapters/{ch}/stream   生成单章（流式）
+POST            /api/courses/{id}/chapters/{ch}/quiz/submit  提交测验
+GET             /api/courses/{id}/review/due             待复习闪卡
+POST            /api/courses/{id}/review/{card}          复习闪卡
+GET             /api/courses/{id}/progress               学习进度
+POST            /api/courses/{id}/export                 导出材料
+GET             /api/status                              系统状态
+```
+
+## API 集成
+
+| API | 用途 | 相关 Skill |
+|-----|------|-----------|
+| Tavily | 网络搜索（教程/博客/论文，主要） | Textbook Planner |
+| OpenAlex | 学术论文搜索（fallback）、引用数据 | Textbook Planner, Deep Researcher |
+| arXiv | 学术论文搜索（fallback）、PDF | Textbook Planner, Deep Researcher |
+| Semantic Scholar | 论文元数据、引用网络 | Deep Researcher, Accuracy Verifier |
+| CrossRef | DOI 验证、引用校验 | Accuracy Verifier |
+| Papers With Code | 论文→代码映射 | Resource Curator, Practice Generator |
+| GitHub | 仓库质量指标 | Resource Curator |
+| Anthropic Claude | LLM 推理与内容生成 | 所有 Skill |
+
+## 开发
 
 ```bash
-# Install with dev dependencies
+# 安装开发依赖
 pip install -e ".[dev]"
 
-# Project conventions
-# - Pydantic v2 models as inter-skill contracts
-# - httpx for async HTTP (with rate limiting and caching)
-# - All file paths use pathlib.Path
-# - JSON for persistence (via LocalStore)
-# - Rich for CLI output formatting
+# 运行测试
+pytest
+
+# 带覆盖率
+pytest --cov=src
+
+# 仅集成测试
+pytest -m integration
+
+# 跳过集成测试
+pytest -m "not integration"
 ```
 
 ## License

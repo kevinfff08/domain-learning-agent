@@ -11,7 +11,7 @@ from src.apis.papers_with_code import PapersWithCodeClient
 from src.apis.semantic_scholar import SemanticScholarClient
 from src.llm.client import LLMClient
 from src.models.assessment import AssessmentProfile
-from src.models.knowledge_graph import ConceptNode
+from src.models.textbook import Chapter
 from src.models.resources import Resource, ResourceCollection, ResourceType
 from src.storage.local_store import LocalStore
 
@@ -50,33 +50,33 @@ class ResourceCurator:
 
     async def curate(
         self,
-        concept: ConceptNode,
+        chapter: Chapter,
         profile: AssessmentProfile,
     ) -> ResourceCollection:
         """Curate resources for a concept based on user profile."""
-        collection = ResourceCollection(concept_id=concept.id)
+        collection = ResourceCollection(concept_id=chapter.id)
 
         # Search papers
         if self.s2:
-            papers = await self._find_papers(concept)
+            papers = await self._find_papers(chapter)
             collection.papers = papers
 
         # Search code repositories
         if self.pwc or self.github:
-            code = await self._find_code(concept)
+            code = await self._find_code(chapter)
             collection.code = code
 
         # Generate blog/video/course recommendations via LLM
-        other_resources = await self._recommend_other_resources(concept, profile)
+        other_resources = await self._recommend_other_resources(chapter, profile)
         collection.blogs = [r for r in other_resources if r.resource_type == ResourceType.BLOG]
         collection.videos = [r for r in other_resources if r.resource_type == ResourceType.VIDEO]
         collection.courses = [r for r in other_resources if r.resource_type == ResourceType.COURSE]
 
         # Save
-        self.store.save_content(concept.id, "resources.json", collection)
+        self.store.save_content(chapter.id, "resources.json", collection)
         return collection
 
-    async def _find_papers(self, concept: ConceptNode) -> list[Resource]:
+    async def _find_papers(self, chapter: Chapter) -> list[Resource]:
         """Find relevant papers from Semantic Scholar."""
         resources = []
         if not self.s2:
@@ -84,7 +84,7 @@ class ResourceCurator:
 
         try:
             papers = await self.s2.search_papers(
-                concept.name, limit=10, fields_of_study=["Computer Science"]
+                chapter.title, limit=10, fields_of_study=["Computer Science"]
             )
             for p in papers:
                 citations = p.get("citationCount", 0) or 0
@@ -110,13 +110,13 @@ class ResourceCurator:
 
         return sorted(resources, key=lambda r: r.citation_count, reverse=True)[:8]
 
-    async def _find_code(self, concept: ConceptNode) -> list[Resource]:
+    async def _find_code(self, chapter: Chapter) -> list[Resource]:
         """Find code repositories from GitHub and PapersWithCode."""
         resources = []
 
         if self.pwc:
             try:
-                pwc_papers = await self.pwc.search_papers(concept.name)
+                pwc_papers = await self.pwc.search_papers(chapter.title)
                 for pp in pwc_papers[:5]:
                     repos = await self.pwc.get_paper_repos(pp.get("id", ""))
                     for repo in repos:
@@ -137,7 +137,7 @@ class ResourceCurator:
 
         if self.github:
             try:
-                repos = await self.github.search_repos(concept.name, limit=5)
+                repos = await self.github.search_repos(chapter.title, limit=5)
                 for repo in repos:
                     stars = repo.get("stargazers_count", 0)
                     if stars > 100 or (stars > 10 and repo.get("pushed_at", "") > "2025-01-01"):
@@ -158,13 +158,13 @@ class ResourceCurator:
 
     async def _recommend_other_resources(
         self,
-        concept: ConceptNode,
+        chapter: Chapter,
         profile: AssessmentProfile,
     ) -> list[Resource]:
         """Use LLM to recommend blogs, videos, and courses."""
         from src.utils.json_repair import repair_json_array
 
-        prompt = f"""Recommend high-quality learning resources for the concept "{concept.name}"
+        prompt = f"""Recommend high-quality learning resources for the concept "{chapter.title}"
 in the field of {profile.target_field}.
 
 Student learning style: {profile.learning_style.value}

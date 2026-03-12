@@ -1,6 +1,14 @@
-"""Skill 4: Deep Researcher - PhD-level three-layer content synthesis."""
+"""Skill 4: Deep Researcher - PhD-level three-layer content synthesis.
+
+Generates content via three independent LLM calls (one per layer),
+each with a specialized system prompt and quality requirements.
+"""
 
 from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Callable, Awaitable
 
 from src.apis.arxiv_client import ArxivClient
 from src.apis.semantic_scholar import SemanticScholarClient
@@ -9,6 +17,8 @@ from src.utils.json_repair import repair_json
 from src.utils.rag_interface import RAGProvider, SimpleRAG
 from src.models.assessment import AssessmentProfile
 from src.models.content import (
+    AlgorithmBlock,
+    CodeAnalysis,
     CrossConceptConnection,
     Equation,
     IntuitionLayer,
@@ -17,79 +27,207 @@ from src.models.content import (
     ResearchSynthesis,
     SourceAttribution,
 )
-from src.models.knowledge_graph import ConceptNode, KnowledgeGraph
+from src.models.textbook import Chapter, Textbook
 from src.storage.local_store import LocalStore
 
-SYSTEM_PROMPT = """You are a world-class AI researcher and educator creating PhD-level learning materials.
-Your explanations must be mathematically rigorous yet accessible.
-Every equation must be traceable to a source paper.
-Return valid JSON only."""
+logger = logging.getLogger(__name__)
 
-SYNTHESIS_PROMPT = """Create a comprehensive, PhD-level learning document for the concept: "{concept_name}"
+ProgressCallback = Callable[[str], Awaitable[None]] | None
 
-Concept description: {description}
-Field: {field}
-Key papers: {key_papers}
-Retrieved paper abstracts:
+# ---------------------------------------------------------------------------
+# System prompts  (one per layer)
+# ---------------------------------------------------------------------------
+
+_MECHANISM_SYSTEM = """You are a world-class theoretical machine-learning researcher writing a PhD-level textbook chapter.
+
+Your writing style:
+- Continuous mathematical narrative (like Goodfellow's "Deep Learning" or Bishop's "Pattern Recognition and Machine Learning")
+- Definitions → Assumptions → Lemmas/Theorems → Full Derivations → Remarks
+- Every equation is numbered, sourced, and rigorously derived — no hand-waving
+- Use $...$ for inline math, $$...$$ for display math in all markdown fields
+- LaTeX equations in the `latex` field of key_equations should be raw LaTeX WITHOUT surrounding $ delimiters
+
+Return valid JSON only. No markdown fencing."""
+
+_INTUITION_SYSTEM = """You are a brilliant research mentor explaining cutting-edge ML concepts to a first-year PhD student.
+
+Your writing style:
+- Deep, insightful analogies that map precisely to the mathematical structure (not superficial comparisons)
+- Explain WHY things work, not just WHAT they are
+- Historical context: what problem was this solving? What came before? Why was this a breakthrough?
+- Identify non-obvious insights that even practitioners miss
+- All text supports inline LaTeX: use $...$ for math in markdown fields
+
+Return valid JSON only. No markdown fencing."""
+
+_PRACTICE_SYSTEM = """You are a senior ML engineer who has reproduced dozens of papers and mentors PhD students on implementation.
+
+Your writing style:
+- Concrete, runnable code with detailed annotations (not toy examples)
+- Explain every design decision: "why this loss function?", "why this learning rate schedule?"
+- Common pitfalls you've personally encountered
+- Practical hyperparameter guidance with reasoning
+- All text supports inline LaTeX: use $...$ for math in markdown fields
+
+Return valid JSON only. No markdown fencing."""
+
+# ---------------------------------------------------------------------------
+# Layer prompts
+# ---------------------------------------------------------------------------
+
+_MECHANISM_PROMPT = """Write the **Mechanism & Theory** layer for: "{concept_name}"
+
+## Context
+- Field: {field}
+- Chapter description: {description}
+- Key papers in this textbook:
+{key_papers}
+- Retrieved paper abstracts:
 {paper_context}
-User's learning goal: {learning_goal}
-User's math level: {math_level}/5
-User's learning style: {learning_style}
+- Related chapters: {related_concepts}
+- Student math level: {math_level}/5
 
-Related concepts in the knowledge graph: {related_concepts}
-
-Generate a three-layer research synthesis as JSON:
+## Required JSON structure
 {{
-  "intuition": {{
-    "analogy": "A vivid, accurate analogy that builds on common knowledge",
-    "visual_description": "How to visualize this concept (describe a diagram or mental model)",
-    "why_it_matters": "Why this concept is important in the field (2-3 sentences)",
-    "key_insight": "The single most important insight to grasp (1 sentence)"
-  }},
-  "mechanism": {{
-    "mathematical_framework": "LaTeX-formatted mathematical overview (use $...$ for inline, $$...$$ for display)",
-    "key_equations": [
-      {{
-        "name": "Equation name",
-        "latex": "LaTeX formula",
-        "explanation": "What each variable means and why this equation matters",
-        "derivation_steps": ["Step 1: Start from...", "Step 2: Apply..."],
-        "source_paper": "arXiv ID or paper reference",
-        "source_equation_ref": "e.g., Eq. 2 in the paper"
-      }}
-    ],
-    "pseudocode": "Clear pseudocode for the core algorithm",
-    "algorithm_steps": ["Step 1: ...", "Step 2: ..."],
-    "connections": [
-      {{
-        "target_concept_id": "related_concept_id",
-        "relationship": "How this concept connects to the other (1-2 sentences)"
-      }}
-    ]
-  }},
-  "practice": {{
-    "reference_implementations": ["GitHub repo URLs"],
-    "key_hyperparameters": {{"param_name": "description and typical values"}},
-    "common_pitfalls": ["Pitfall 1", "Pitfall 2"],
-    "reproduction_checklist": ["Step 1: Set up environment", "Step 2: ..."]
-  }},
+  "theoretical_narrative": "<1000-2000 words of continuous mathematical exposition in markdown+LaTeX. Structure: (1) Problem formulation and notation, (2) Key definitions, (3) Main theorem/result statement, (4) Full derivation with intermediate steps, (5) Important special cases and remarks, (6) Connections to related work. This should read like a chapter from a graduate textbook — every step justified, no gaps.>",
+
+  "mathematical_framework": "<500+ words high-level mathematical overview in markdown+LaTeX: the core formulation, objective function, key assumptions, and how the pieces fit together.>",
+
+  "key_equations": [
+    {{
+      "name": "Descriptive equation name",
+      "latex": "raw LaTeX WITHOUT $ delimiters",
+      "explanation": "100+ words: what each variable represents, why this form was chosen, connections to other equations. Use markdown with inline $...$ LaTeX.",
+      "derivation_steps": ["Step 1: Start from X because...", "Step 2: Apply Y, noting that...", "..."],
+      "source_paper": "arXiv ID or paper reference",
+      "source_equation_ref": "e.g., Eq. 2"
+    }}
+  ],
+
+  "algorithms": [
+    {{
+      "name": "Algorithm N: Name (e.g., 'Algorithm 1: DDPM Training')",
+      "inputs": ["$x_0 \\\\sim q(x_0)$: training data sample", "..."],
+      "outputs": ["Trained model parameters $\\\\theta$"],
+      "steps": [
+        "1: **repeat**",
+        "2:   Sample $x_0 \\\\sim q(x_0)$, $t \\\\sim \\\\text{{Uniform}}(1,T)$, $\\\\epsilon \\\\sim \\\\mathcal{{N}}(0, I)$",
+        "..."
+      ],
+      "source_paper": "arXiv ID"
+    }}
+  ],
+
+  "connections": [
+    {{
+      "target_concept_id": "related_chapter_title",
+      "relationship": "Detailed explanation of how this concept relates"
+    }}
+  ],
+
   "sources": [
     {{
       "arxiv_id": "2006.11239",
       "title": "Paper title",
-      "source_type": "paper|blog|code|course",
-      "role": "primary_source|builds_upon|reference"
+      "source_type": "paper",
+      "role": "primary_source"
     }}
   ]
 }}
 
-Requirements:
-- Mathematical rigor: every equation must be correctly stated
-- Source attribution: tag each equation and key claim with its source paper
-- For "reproduce_papers" goal: include detailed reproduction checklist
-- Cross-concept connections: explicitly link to related concepts in the graph
-- Be comprehensive but clear - this is PhD-level content
-- Base your content on the provided paper abstracts when available. Cite specific papers.
+## Quality requirements
+- **Completeness**: Every derivation step must be explicit. A PhD student should be able to follow from start to finish without consulting another source.
+- **Rigor**: State assumptions clearly. If an approximation is made, say so and explain why it's valid.
+- **Depth**: Include at least 5-8 key equations with full derivations. Include 1-2 algorithms.
+- **Attribution**: Every major equation and claim must cite its source paper.
+"""
+
+_INTUITION_PROMPT = """Write the **Intuition & Understanding** layer for: "{concept_name}"
+
+## Context
+- Field: {field}
+- Chapter description: {description}
+- Student learning goal: {learning_goal}
+- Student learning style: {learning_style}
+- Key papers: {key_papers}
+- Retrieved paper abstracts:
+{paper_context}
+
+## Reference (mechanism layer summary, for consistency)
+The theoretical treatment covers: {mechanism_summary}
+
+## Required JSON structure
+{{
+  "analogy": "<500+ words markdown. Build a detailed analogy that maps precisely to the mathematical structure. Include: (1) The analogy itself, (2) Explicit mapping table: 'In the analogy X corresponds to mathematical concept Y', (3) Where the analogy breaks down and why. Use inline $...$ LaTeX when referencing math.>",
+
+  "why_it_matters": "<300+ words markdown. Cover: (1) Historical context — what problem motivated this work? What approaches failed before? (2) Downstream impact — what breakthroughs did this enable? (3) Current relevance — how is this used today? (4) Open problems — what remains unsolved?>",
+
+  "key_insight": "<200+ words markdown. The single most important non-obvious insight. Explain: (1) What the insight is, (2) Why it's surprising or non-trivial, (3) How it changes how you think about the problem. Use inline $...$ LaTeX.>"
+}}
+
+## Quality requirements
+- **Depth over breadth**: Go deep into one great analogy rather than listing several shallow ones.
+- **Precision**: The analogy must be technically accurate — don't sacrifice correctness for accessibility.
+- **Non-triviality**: The key_insight should be something a reader wouldn't get from just reading the abstract.
+"""
+
+_PRACTICE_PROMPT = """Write the **Practice & Implementation** layer for: "{concept_name}"
+
+## Context
+- Field: {field}
+- Chapter description: {description}
+- Student learning goal: {learning_goal}
+- Retrieved paper abstracts:
+{paper_context}
+
+## Reference (mechanism layer summary, for consistency)
+The theoretical treatment covers: {mechanism_summary}
+
+## Required JSON structure
+{{
+  "code_analysis": [
+    {{
+      "title": "Descriptive title (e.g., 'DDPM Training Loop — PyTorch')",
+      "language": "python",
+      "source_url": "GitHub URL or reference if applicable",
+      "code": "<50-150 lines of complete, runnable code. Include imports, class/function definitions, and a __main__ or usage example. Use real library calls (PyTorch, JAX, etc.), not pseudocode.>",
+      "line_annotations": [
+        "Lines 1-5: Import dependencies — we use ... because ...",
+        "Lines 7-15: Define the noise schedule — this implements Eq. X from the theory section",
+        "..."
+      ],
+      "key_design_decisions": [
+        "We use cosine schedule instead of linear because ... (see [paper])",
+        "The EMA update rate of 0.9999 balances ..."
+      ]
+    }}
+  ],
+
+  "reference_implementations": [
+    "https://github.com/org/repo — Brief description of what this implements"
+  ],
+
+  "key_hyperparameters": {{
+    "parameter_name": "Typical value and WHY — e.g., 'Learning rate: 2e-4. Lower than standard because the loss landscape of diffusion models is...'",
+    "...": "..."
+  }},
+
+  "common_pitfalls": [
+    "Detailed pitfall description with explanation of why it happens and how to fix it (50+ words each)"
+  ],
+
+  "reproduction_checklist": [
+    "Step 1: ...",
+    "Step 2: ..."
+  ]
+}}
+
+## Quality requirements
+- **Runnable code**: The code should be as close to runnable as possible. Use real APIs, real tensor shapes.
+- **Line-by-line analysis**: Every non-trivial block of code must have an annotation explaining the design choice.
+- **At least 1 code analysis block** with 50+ lines.
+- **At least 5 hyperparameters** with reasoning (not just values).
+- **At least 5 common pitfalls** with detailed explanations.
 """
 
 
@@ -110,10 +248,11 @@ class DeepResearcher:
         self.arxiv = arxiv
         self.rag = rag_provider or SimpleRAG(semantic_scholar, arxiv)
 
-    async def _fetch_paper_context(self, concept: ConceptNode) -> str:
+    async def _fetch_paper_context(self, chapter: Chapter) -> str:
         """Fetch real paper abstracts from S2/arXiv for grounding."""
+        query = " ".join(chapter.key_topics[:3]) if chapter.key_topics else chapter.title
         try:
-            results = await self.rag.query(concept.name)
+            results = await self.rag.query(query)
         except Exception:
             results = []
 
@@ -129,29 +268,23 @@ class DeepResearcher:
             lines.append(f"- [{source}] {title} ({year}): {content}")
         return "\n".join(lines)
 
-    async def synthesize(
+    def _build_shared_context(
         self,
-        concept: ConceptNode,
-        graph: KnowledgeGraph,
+        chapter: Chapter,
+        textbook: Textbook,
         profile: AssessmentProfile,
-    ) -> ResearchSynthesis:
-        """Generate comprehensive three-layer content for a concept."""
-        # Gather context
+        paper_context: str,
+    ) -> dict[str, str]:
+        """Build the shared template variables used across all three prompts."""
         related = []
-        for edge in graph.edges:
-            if edge.source == concept.id or edge.target == concept.id:
-                other_id = edge.target if edge.source == concept.id else edge.source
-                other = graph.get_node(other_id)
-                if other:
-                    related.append(f"{other.name} ({edge.edge_type.value})")
+        for ch in textbook.chapters:
+            if ch.id != chapter.id and abs(ch.chapter_number - chapter.chapter_number) <= 2:
+                related.append(ch.title)
 
         key_papers_text = "\n".join(
-            f"- {p.title} ({p.arxiv_id}, {p.year}, citations: {p.citation_count})"
-            for p in concept.key_papers
-        ) if concept.key_papers else "No specific papers listed - use your knowledge"
-
-        # Fetch real paper context
-        paper_context = await self._fetch_paper_context(concept)
+            f"- {p.title} ({p.arxiv_id or p.doi}, {p.year}, citations: {p.citation_count})"
+            for p in textbook.survey_papers[:5]
+        ) if textbook.survey_papers else "No specific papers listed - use your knowledge"
 
         math_level = round(sum([
             profile.math_foundations.linear_algebra.level,
@@ -160,42 +293,118 @@ class DeepResearcher:
             profile.math_foundations.optimization.level,
         ]) / 4)
 
-        prompt = SYNTHESIS_PROMPT.format(
-            concept_name=concept.name,
-            description=concept.description,
-            field=graph.field,
-            key_papers=key_papers_text,
-            paper_context=paper_context,
-            learning_goal=profile.learning_goal.value,
-            math_level=math_level,
-            learning_style=profile.learning_style.value,
-            related_concepts=", ".join(related) if related else "None identified",
+        return {
+            "concept_name": chapter.title,
+            "description": chapter.description,
+            "field": textbook.field,
+            "key_papers": key_papers_text,
+            "paper_context": paper_context,
+            "related_concepts": ", ".join(related) if related else "None identified",
+            "math_level": str(math_level),
+            "learning_goal": profile.learning_goal.value,
+            "learning_style": profile.learning_style.value,
+        }
+
+    # ------------------------------------------------------------------
+    # Individual layer generators
+    # ------------------------------------------------------------------
+
+    async def _generate_mechanism(
+        self, ctx: dict[str, str], on_progress: ProgressCallback = None,
+    ) -> tuple[dict, list[SourceAttribution]]:
+        """Generate mechanism layer (call 1 — most important, runs first)."""
+        if on_progress:
+            await on_progress("Generating mechanism & theory layer (rigorous mathematical derivations)...")
+
+        prompt = _MECHANISM_PROMPT.format(**ctx)
+        raw = self.llm.generate_json(prompt, system=_MECHANISM_SYSTEM, temperature=0.2)
+        data = repair_json(raw)
+
+        sources = [SourceAttribution(**s) for s in data.get("sources", [])]
+        return data, sources
+
+    async def _generate_intuition(
+        self, ctx: dict[str, str], mechanism_summary: str, on_progress: ProgressCallback = None,
+    ) -> dict:
+        """Generate intuition layer (call 2 — uses mechanism summary for consistency)."""
+        if on_progress:
+            await on_progress("Generating intuition & understanding layer (analogies, insights)...")
+
+        ctx_with_mechanism = {**ctx, "mechanism_summary": mechanism_summary}
+        prompt = _INTUITION_PROMPT.format(**ctx_with_mechanism)
+        raw = self.llm.generate_json(prompt, system=_INTUITION_SYSTEM, temperature=0.4)
+        return repair_json(raw)
+
+    async def _generate_practice(
+        self, ctx: dict[str, str], mechanism_summary: str, on_progress: ProgressCallback = None,
+    ) -> dict:
+        """Generate practice layer (call 3 — uses mechanism summary for consistency)."""
+        if on_progress:
+            await on_progress("Generating practice & implementation layer (code analysis, pitfalls)...")
+
+        ctx_with_mechanism = {**ctx, "mechanism_summary": mechanism_summary}
+        prompt = _PRACTICE_PROMPT.format(**ctx_with_mechanism)
+        raw = self.llm.generate_json(prompt, system=_PRACTICE_SYSTEM, temperature=0.2)
+        return repair_json(raw)
+
+    # ------------------------------------------------------------------
+    # Main entry point
+    # ------------------------------------------------------------------
+
+    async def synthesize(
+        self,
+        chapter: Chapter,
+        textbook: Textbook,
+        profile: AssessmentProfile,
+        on_progress: ProgressCallback = None,
+    ) -> ResearchSynthesis:
+        """Generate comprehensive three-layer content for a chapter.
+
+        Pipeline:
+          1. Mechanism layer (first, as other layers reference it)
+          2. Intuition + Practice layers (in parallel, both use mechanism summary)
+        """
+        paper_context = await self._fetch_paper_context(chapter)
+        ctx = self._build_shared_context(chapter, textbook, profile, paper_context)
+
+        # --- Call 1: Mechanism (must complete first) ---
+        if on_progress:
+            await on_progress("Starting PhD-level content generation (3 specialized LLM calls)...")
+
+        mechanism_data, sources = await self._generate_mechanism(ctx, on_progress)
+
+        # Build a short summary of the mechanism layer for the other two prompts
+        mechanism_summary = mechanism_data.get("mathematical_framework", "")[:500]
+        eq_names = [eq.get("name", "") for eq in mechanism_data.get("key_equations", [])[:5]]
+        if eq_names:
+            mechanism_summary += f"\nKey equations: {', '.join(eq_names)}"
+
+        # --- Calls 2 & 3: Intuition + Practice (parallel) ---
+        intuition_data, practice_data = await asyncio.gather(
+            self._generate_intuition(ctx, mechanism_summary, on_progress),
+            self._generate_practice(ctx, mechanism_summary, on_progress),
         )
 
-        response = self.llm.generate_json(
-            prompt, system=SYSTEM_PROMPT, temperature=0.3
-        )
+        if on_progress:
+            await on_progress("Assembling final synthesis...")
 
-        data = repair_json(response)
-
-        # Build synthesis
-        intuition_data = data.get("intuition", {})
-        mechanism_data = data.get("mechanism", {})
-        practice_data = data.get("practice", {})
-
+        # --- Assemble ---
         synthesis = ResearchSynthesis(
-            concept_id=concept.id,
-            title=concept.name,
+            concept_id=chapter.id,
+            title=chapter.title,
             intuition=IntuitionLayer(
                 analogy=intuition_data.get("analogy", ""),
-                visual_description=intuition_data.get("visual_description", ""),
                 why_it_matters=intuition_data.get("why_it_matters", ""),
                 key_insight=intuition_data.get("key_insight", ""),
             ),
             mechanism=MechanismLayer(
+                theoretical_narrative=mechanism_data.get("theoretical_narrative", ""),
                 mathematical_framework=mechanism_data.get("mathematical_framework", ""),
                 key_equations=[
                     Equation(**eq) for eq in mechanism_data.get("key_equations", [])
+                ],
+                algorithms=[
+                    AlgorithmBlock(**alg) for alg in mechanism_data.get("algorithms", [])
                 ],
                 pseudocode=mechanism_data.get("pseudocode", ""),
                 algorithm_steps=mechanism_data.get("algorithm_steps", []),
@@ -205,45 +414,46 @@ class DeepResearcher:
                 ],
             ),
             practice=PracticeLayer(
+                code_analysis=[
+                    CodeAnalysis(**ca) for ca in practice_data.get("code_analysis", [])
+                ],
                 reference_implementations=practice_data.get("reference_implementations", []),
                 key_hyperparameters=practice_data.get("key_hyperparameters", {}),
                 common_pitfalls=practice_data.get("common_pitfalls", []),
                 reproduction_checklist=practice_data.get("reproduction_checklist", []),
             ),
-            sources=[
-                SourceAttribution(**s) for s in data.get("sources", [])
-            ],
+            sources=sources,
         )
 
         # Save
-        self.store.save_content(concept.id, "research_synthesis.json", synthesis)
+        self.store.save_content(chapter.id, "research_synthesis.json", synthesis)
+        logger.info("Saved synthesis for chapter %s (%s)", chapter.id, chapter.title)
         return synthesis
 
     def generate_alternative_explanation(
         self,
-        concept: ConceptNode,
+        chapter: Chapter,
         previous_synthesis: ResearchSynthesis,
         struggle_areas: list[str] | None = None,
     ) -> ResearchSynthesis:
         """Generate an alternative explanation for Level 1 adaptive intervention."""
-        prompt = f"""The student is struggling with the concept "{concept.name}".
+        prompt = f"""The student is struggling with the concept "{chapter.title}".
 
 Previous explanation approach:
 - Analogy used: {previous_synthesis.intuition.analogy[:200]}
-- Key insight: {previous_synthesis.intuition.key_insight}
+- Key insight: {previous_synthesis.intuition.key_insight[:200]}
 
 {f"Specific areas of confusion: {', '.join(struggle_areas)}" if struggle_areas else ""}
 
 Generate a COMPLETELY DIFFERENT explanation using:
 1. A different analogy/metaphor
-2. A different visual model
-3. Worked examples instead of abstract definitions
-4. Step-by-step walkthrough of a concrete case
+2. Worked examples instead of abstract definitions
+3. Step-by-step walkthrough of a concrete case
 
-Return JSON with the same structure as before but with fresh, alternative content.
+Return JSON with keys: "intuition" (with "analogy", "why_it_matters", "key_insight") and "mechanism" (with "pseudocode", "algorithm_steps").
 Focus on the intuition and mechanism layers."""
 
-        response = self.llm.generate_json(prompt, system=SYSTEM_PROMPT)
+        response = self.llm.generate_json(prompt, system=_INTUITION_SYSTEM)
 
         try:
             data = repair_json(response)
@@ -257,7 +467,6 @@ Focus on the intuition and mechanism layers."""
         if intuition_data:
             alt.intuition = IntuitionLayer(
                 analogy=intuition_data.get("analogy", alt.intuition.analogy),
-                visual_description=intuition_data.get("visual_description", alt.intuition.visual_description),
                 why_it_matters=intuition_data.get("why_it_matters", alt.intuition.why_it_matters),
                 key_insight=intuition_data.get("key_insight", alt.intuition.key_insight),
             )
@@ -265,5 +474,5 @@ Focus on the intuition and mechanism layers."""
             alt.mechanism.pseudocode = mechanism_data.get("pseudocode", alt.mechanism.pseudocode)
             alt.mechanism.algorithm_steps = mechanism_data.get("algorithm_steps", alt.mechanism.algorithm_steps)
 
-        self.store.save_content(concept.id, "research_synthesis_alt.json", alt)
+        self.store.save_content(chapter.id, "research_synthesis_alt.json", alt)
         return alt

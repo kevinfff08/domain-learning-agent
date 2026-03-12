@@ -119,8 +119,10 @@ def repair_json_array(raw: str) -> list:
 def _strip_fences(raw: str) -> str:
     """Strip markdown code fences and whitespace."""
     text = raw.strip()
-    text = re.sub(r"^```(?:json)?\s*", "", text)
-    text = re.sub(r"\s*```$", "", text)
+    # Remove opening fence (```json, ```JSON, ``` json, etc.)
+    text = re.sub(r"^`{3,}\s*(?:json|JSON)?\s*\n?", "", text)
+    # Remove closing fence (may not exist if output was truncated)
+    text = re.sub(r"\n?\s*`{3,}\s*$", "", text)
     return text.strip()
 
 

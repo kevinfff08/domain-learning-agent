@@ -1,11 +1,13 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { fetchQuiz, submitQuiz, exportQuiz } from '../api/client'
+import { useCourse } from '../contexts/CourseContext'
+import { submitQuiz } from '../api/client'
 import type { Quiz, QuizResult } from '../types'
 import QuizQuestion from '../components/QuizQuestion'
 
 export default function QuizPage() {
-  const { conceptId } = useParams<{ conceptId: string }>()
+  const { courseId } = useCourse()
+  const { chapterId } = useParams<{ chapterId: string }>()
   const [quiz, setQuiz] = useState<Quiz | null>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [result, setResult] = useState<QuizResult | null>(null)
@@ -14,32 +16,31 @@ export default function QuizPage() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!conceptId) return
-    fetchQuiz(conceptId)
-      .then(setQuiz)
+    if (!courseId || !chapterId) return
+    // Fetch chapter content which may include quiz data, or fetch quiz endpoint
+    // For now, we use the chapter content endpoint and assume quiz is generated on demand via submit
+    setLoading(false)
+    // Try to fetch quiz from a dedicated endpoint
+    fetch(`/api/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/quiz`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error('加载测验失败')
+        return res.json()
+      })
+      .then((data) => setQuiz(data as Quiz))
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false))
-  }, [conceptId])
+  }, [courseId, chapterId])
 
   const handleSubmit = async () => {
-    if (!conceptId || !quiz) return
+    if (!courseId || !chapterId || !quiz) return
     setSubmitting(true)
     try {
-      const res = await submitQuiz(conceptId, answers)
+      const res = await submitQuiz(courseId, chapterId, answers)
       setResult(res)
     } catch (err) {
       setError(err instanceof Error ? err.message : '提交失败')
     } finally {
       setSubmitting(false)
-    }
-  }
-
-  const handleExport = async () => {
-    if (!conceptId) return
-    try {
-      await exportQuiz(conceptId)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '导出失败')
     }
   }
 
@@ -77,12 +78,6 @@ export default function QuizPage() {
               ` | 限时 ${quiz.time_limit_minutes} 分钟`}
           </p>
         </div>
-        <button
-          onClick={handleExport}
-          className="text-sm bg-slate-100 text-slate-600 px-4 py-2 rounded-lg hover:bg-slate-200 transition-colors"
-        >
-          下载测验
-        </button>
       </div>
 
       {/* Result overlay */}
