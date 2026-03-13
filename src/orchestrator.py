@@ -247,33 +247,58 @@ class LearningOrchestrator:
         textbook.updated_at = datetime.now()
         self.store.save_course_model(course_id, "textbook.json", textbook)
 
-        # Step 1: Deep Research (3 specialized LLM calls)
-        _emit("deep_research", f"正在生成三层内容：{chapter.title}")
+        from src.models.content import ResearchSynthesis as _RS
+        from src.models.verification import VerificationReport as _VR
+        from src.models.resources import ResourceCollection as _RC
+        from src.models.quiz import Quiz as _Quiz
 
-        async def _researcher_progress(msg: str) -> None:
-            _emit("deep_research", msg)
+        # ---- helpers to load previously saved intermediate results ----
+        def _load(filename: str, cls):
+            return self.store.load_course_content(course_id, chapter_id, filename, cls)
 
-        synthesis = await self.researcher.synthesize(
-            chapter, textbook, profile, on_progress=_researcher_progress
-        )
-        self.store.save_course_content(course_id, chapter_id, "research_synthesis.json", synthesis)
+        # Step 1: Deep Research (3 specialized LLM calls) — most expensive
+        synthesis = _load("research_synthesis.json", _RS)
+        if synthesis:
+            _emit("deep_research", f"已有研究内容，跳过生成：{chapter.title}")
+        else:
+            _emit("deep_research", f"正在生成三层内容：{chapter.title}")
+
+            async def _researcher_progress(msg: str) -> None:
+                _emit("deep_research", msg)
+
+            synthesis = await self.researcher.synthesize(
+                chapter, textbook, profile, on_progress=_researcher_progress
+            )
+            self.store.save_course_content(course_id, chapter_id, "research_synthesis.json", synthesis)
 
         # Step 2: Accuracy Verification
-        _emit("accuracy_verify", "正在核验内容准确性…")
-        report = await self.verifier.verify(synthesis)
-        self.store.save_course_content(course_id, chapter_id, "verification_report.json", report)
+        report = _load("verification_report.json", _VR)
+        if report:
+            _emit("accuracy_verify", "已有核验报告，跳过")
+        else:
+            _emit("accuracy_verify", "正在核验内容准确性…")
+            report = await self.verifier.verify(synthesis)
+            self.store.save_course_content(course_id, chapter_id, "verification_report.json", report)
 
         # Step 3: Resource Curation
-        _emit("resource_curate", "正在搜索推荐资源…")
-        resources = await self.curator.curate(chapter, profile)
-        self.store.save_course_content(course_id, chapter_id, "resources.json", resources)
+        resources = _load("resources.json", _RC)
+        if resources:
+            _emit("resource_curate", "已有推荐资源，跳过")
+        else:
+            _emit("resource_curate", "正在搜索推荐资源…")
+            resources = await self.curator.curate(chapter, profile)
+            self.store.save_course_content(course_id, chapter_id, "resources.json", resources)
 
         # Step 4: Quiz Generation
-        _emit("quiz_generate", "正在生成测验题目…")
-        prev_scores_cp = progress.concepts.get(chapter_id, None)
-        prev = prev_scores_cp.quiz_scores if prev_scores_cp else None
-        quiz = self.quiz_engine.generate_quiz(synthesis, profile, prev)
-        self.store.save_course_content(course_id, chapter_id, "quiz.json", quiz)
+        quiz = _load("quiz.json", _Quiz)
+        if quiz:
+            _emit("quiz_generate", "已有测验题目，跳过")
+        else:
+            _emit("quiz_generate", "正在生成测验题目…")
+            prev_scores_cp = progress.concepts.get(chapter_id, None)
+            prev = prev_scores_cp.quiz_scores if prev_scores_cp else None
+            quiz = self.quiz_engine.generate_quiz(synthesis, profile, prev)
+            self.store.save_course_content(course_id, chapter_id, "quiz.json", quiz)
 
         # Step 5: Practice Materials
         _emit("practice_generate", "正在生成练习材料…")
@@ -297,6 +322,43 @@ class LearningOrchestrator:
             "quiz": quiz,
             "status": "ready",
         }
+
+    def delete_chapter_content(self, course_id: str, chapter_id: str) -> bool:
+        """Delete all generated content for a chapter, resetting it to pending."""
+        textbook = self.store.load_course_model(course_id, "textbook.json", Textbook)
+        if not textbook:
+            raise ValueError(f"No textbook for course '{course_id}'")
+
+        chapter = next((c for c in textbook.chapters if c.id == chapter_id), None)
+        if not chapter:
+            raise ValueError(f"Chapter '{chapter_id}' not found")
+
+        # Delete content directory
+        content_dir = self.store.get_course_dir(course_id) / "content" / chapter_id
+        if content_dir.exists():
+            import shutil
+            shutil.rmtree(content_dir)
+
+        # Delete quiz and cards
+        quiz_dir = self.store.get_course_dir(course_id) / "quizzes" / chapter_id
+        if quiz_dir.exists():
+            import shutil
+            shutil.rmtree(quiz_dir)
+        cards_dir = self.store.get_course_dir(course_id) / "cards" / chapter_id
+        if cards_dir.exists():
+            import shutil
+            shutil.rmtree(cards_dir)
+
+        # Reset chapter status
+        chapter.status = ChapterStatus.PENDING
+        chapter.has_content = False
+        chapter.quiz_score = None
+        chapter.mastery = 0.0
+        textbook.updated_at = datetime.now()
+        self.store.save_course_model(course_id, "textbook.json", textbook)
+
+        logger.info("Deleted content for chapter %s in course %s", chapter_id, course_id)
+        return True
 
     async def generate_all_chapters(
         self,

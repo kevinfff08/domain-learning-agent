@@ -229,6 +229,23 @@ async def stream_chapter(
     return EventSourceResponse(event_generator())
 
 
+# ── Delete chapter content ───────────────────────────────────────────
+
+@router.delete("/courses/{course_id}/chapters/{chapter_id}")
+def delete_chapter_content(
+    course_id: str,
+    chapter_id: str,
+    orch: LearningOrchestrator = Depends(get_orchestrator),
+):
+    """Delete all generated content for a chapter, resetting to pending."""
+    logger.info("DELETE /courses/%s/chapters/%s", course_id, chapter_id)
+    try:
+        orch.delete_chapter_content(course_id, chapter_id)
+        return {"message": f"Chapter {chapter_id} content deleted", "chapter_id": chapter_id}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
 # ── Quiz ─────────────────────────────────────────────────────────────
 
 class QuizSubmitRequest(BaseModel):

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
+import remarkGfm from 'remark-gfm'
 import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import type { ResearchSynthesis, AlgorithmBlock as AlgorithmBlockType, CodeAnalysis as CodeAnalysisType } from '../types'
@@ -19,11 +20,14 @@ const tabs: { key: TabKey; label: string }[] = [
   { key: 'practice', label: '实践应用' },
 ]
 
-/** Render markdown + LaTeX inline. Used for all text that may contain $..$ or $$..$$. */
+const mdPlugins = [remarkGfm, remarkMath]
+const mdRehype = [rehypeKatex]
+
+/** Render markdown + LaTeX + GFM tables. */
 function Md({ children, className }: { children: string; className?: string }) {
   return (
-    <div className={`prose prose-slate prose-sm max-w-none ${className ?? ''}`}>
-      <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>
+    <div className={`prose prose-slate max-w-none ${className ?? ''}`}>
+      <ReactMarkdown remarkPlugins={mdPlugins} rehypePlugins={mdRehype}>
         {children}
       </ReactMarkdown>
     </div>
@@ -53,7 +57,7 @@ export default function ContentRenderer({ synthesis }: Props) {
       </div>
 
       {/* Tab Content */}
-      <div className="p-6">
+      <div className="p-6 md:p-8">
         {activeTab === 'intuition' && (
           <IntuitionPanel synthesis={synthesis} />
         )}
@@ -71,26 +75,35 @@ export default function ContentRenderer({ synthesis }: Props) {
 function IntuitionPanel({ synthesis }: Props) {
   const { intuition } = synthesis
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {intuition.analogy && (
-        <div className="rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-5">
-          <h3 className="text-sm font-semibold text-blue-700 mb-2">类比</h3>
-          <Md className="text-slate-700">{intuition.analogy}</Md>
-        </div>
+        <section className="rounded-xl bg-gradient-to-br from-blue-50 to-indigo-50 border border-blue-200 p-6">
+          <h3 className="text-base font-semibold text-blue-700 mb-4 flex items-center gap-2">
+            <span className="w-1.5 h-5 rounded-full bg-blue-500 inline-block" />
+            类比
+          </h3>
+          <Md>{intuition.analogy}</Md>
+        </section>
       )}
 
       {intuition.key_insight && (
-        <div className="rounded-lg bg-green-50 border border-green-300 p-5">
-          <h3 className="text-sm font-semibold text-green-700 mb-2">核心洞察</h3>
-          <Md className="text-slate-800 font-medium">{intuition.key_insight}</Md>
-        </div>
+        <section className="rounded-xl bg-emerald-50/70 border border-emerald-200 p-6">
+          <h3 className="text-base font-semibold text-emerald-700 mb-4 flex items-center gap-2">
+            <span className="w-1.5 h-5 rounded-full bg-emerald-500 inline-block" />
+            核心洞察
+          </h3>
+          <Md>{intuition.key_insight}</Md>
+        </section>
       )}
 
       {intuition.why_it_matters && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-600 mb-2">为什么重要</h3>
-          <Md className="text-slate-600">{intuition.why_it_matters}</Md>
-        </div>
+        <section className="rounded-xl bg-white border border-slate-200 p-6">
+          <h3 className="text-base font-semibold text-slate-700 mb-4 flex items-center gap-2">
+            <span className="w-1.5 h-5 rounded-full bg-amber-400 inline-block" />
+            为什么重要
+          </h3>
+          <Md>{intuition.why_it_matters}</Md>
+        </section>
       )}
     </div>
   )
@@ -192,73 +205,90 @@ function CodeAnalysisRenderer({ analysis }: { analysis: CodeAnalysisType }) {
   )
 }
 
+function SectionHeading({ children, color = 'slate' }: { children: React.ReactNode; color?: string }) {
+  const barColors: Record<string, string> = {
+    slate: 'bg-slate-400',
+    blue: 'bg-blue-500',
+    violet: 'bg-violet-500',
+    amber: 'bg-amber-500',
+  }
+  return (
+    <h3 className="text-base font-semibold text-slate-700 mb-4 flex items-center gap-2">
+      <span className={`w-1.5 h-5 rounded-full ${barColors[color] ?? barColors.slate} inline-block`} />
+      {children}
+    </h3>
+  )
+}
+
 function MechanismPanel({ synthesis }: Props) {
   const { mechanism } = synthesis
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Theoretical Narrative — the main content block */}
       {mechanism.theoretical_narrative && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">理论推导</h3>
-          <div className="rounded-lg bg-slate-50 border border-slate-200 p-5">
-            <Md>{mechanism.theoretical_narrative}</Md>
-          </div>
-        </div>
+        <section className="rounded-xl bg-slate-50/80 border border-slate-200 p-6">
+          <SectionHeading color="blue">理论推导</SectionHeading>
+          <Md>{mechanism.theoretical_narrative}</Md>
+        </section>
       )}
 
       {/* Mathematical Framework (legacy / overview) */}
       {mechanism.mathematical_framework && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">数学框架</h3>
+        <section className="rounded-xl bg-white border border-slate-200 p-6">
+          <SectionHeading color="violet">数学框架</SectionHeading>
           <Md>{mechanism.mathematical_framework}</Md>
-        </div>
+        </section>
       )}
 
       {/* Key Equations — quick reference */}
       {mechanism.key_equations?.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">核心公式</h3>
-          {mechanism.key_equations.map((eq, i) => (
-            <EquationBlock key={i} equation={eq} />
-          ))}
-        </div>
+        <section>
+          <SectionHeading color="amber">核心公式</SectionHeading>
+          <div className="space-y-3">
+            {mechanism.key_equations.map((eq, i) => (
+              <EquationBlock key={i} equation={eq} />
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Algorithms — academic style */}
       {mechanism.algorithms?.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">算法</h3>
-          {mechanism.algorithms.map((alg, i) => (
-            <AlgorithmBlockRenderer key={i} algorithm={alg} />
-          ))}
-        </div>
+        <section>
+          <SectionHeading>算法</SectionHeading>
+          <div className="space-y-4">
+            {mechanism.algorithms.map((alg, i) => (
+              <AlgorithmBlockRenderer key={i} algorithm={alg} />
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Legacy pseudocode */}
       {mechanism.pseudocode && !mechanism.algorithms?.length && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">伪代码</h3>
+        <section>
+          <SectionHeading>伪代码</SectionHeading>
           <CodeBlock code={mechanism.pseudocode} language="python" />
-        </div>
+        </section>
       )}
 
       {/* Legacy algorithm steps */}
       {mechanism.algorithm_steps?.length > 0 && !mechanism.algorithms?.length && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">算法步骤</h3>
-          <ol className="space-y-2">
+        <section>
+          <SectionHeading>算法步骤</SectionHeading>
+          <ol className="space-y-3">
             {mechanism.algorithm_steps.map((step, i) => (
               <li key={i} className="flex gap-3 text-sm text-slate-700">
-                <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-semibold">
+                <span className="flex-shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-xs font-semibold">
                   {i + 1}
                 </span>
-                <div className="leading-relaxed pt-0.5 flex-1">
+                <div className="leading-relaxed pt-1 flex-1">
                   <Md>{step}</Md>
                 </div>
               </li>
             ))}
           </ol>
-        </div>
+        </section>
       )}
     </div>
   )
@@ -267,21 +297,23 @@ function MechanismPanel({ synthesis }: Props) {
 function PracticePanel({ synthesis }: Props) {
   const { practice } = synthesis
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Code Analysis — new primary content */}
       {practice.code_analysis?.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">代码分析</h3>
-          {practice.code_analysis.map((ca, i) => (
-            <CodeAnalysisRenderer key={i} analysis={ca} />
-          ))}
-        </div>
+        <section>
+          <SectionHeading color="blue">代码分析</SectionHeading>
+          <div className="space-y-5">
+            {practice.code_analysis.map((ca, i) => (
+              <CodeAnalysisRenderer key={i} analysis={ca} />
+            ))}
+          </div>
+        </section>
       )}
 
       {/* Reference Implementations */}
       {practice.reference_implementations?.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">参考实现</h3>
+        <section>
+          <SectionHeading>参考实现</SectionHeading>
           <div className="grid gap-3">
             {practice.reference_implementations.map((url, i) => (
               <a
@@ -289,71 +321,71 @@ function PracticePanel({ synthesis }: Props) {
                 href={url.startsWith('http') ? url.split(' — ')[0] : '#'}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="block rounded-lg border border-slate-200 p-4 hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
+                className="block rounded-xl border border-slate-200 p-4 hover:border-blue-300 hover:bg-blue-50/30 transition-colors"
               >
                 <span className="text-sm font-medium text-blue-600 break-all">{url}</span>
               </a>
             ))}
           </div>
-        </div>
+        </section>
       )}
 
       {/* Hyperparameters */}
       {practice.key_hyperparameters && Object.keys(practice.key_hyperparameters).length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">超参数配置</h3>
-          <div className="rounded-lg border border-slate-200 overflow-hidden">
+        <section>
+          <SectionHeading color="violet">超参数配置</SectionHeading>
+          <div className="rounded-xl border border-slate-200 overflow-hidden">
             <table className="w-full text-sm">
-              <thead className="bg-slate-50">
+              <thead className="bg-slate-50 border-b-2 border-slate-200">
                 <tr>
-                  <th className="text-left px-4 py-2 font-medium text-slate-600">参数</th>
-                  <th className="text-left px-4 py-2 font-medium text-slate-600">说明</th>
+                  <th className="text-left px-5 py-3 font-semibold text-slate-600">参数</th>
+                  <th className="text-left px-5 py-3 font-semibold text-slate-600">说明</th>
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(practice.key_hyperparameters).map(([k, v]) => (
-                  <tr key={k} className="border-t border-slate-100">
-                    <td className="px-4 py-2 font-mono text-xs text-slate-700">{k}</td>
-                    <td className="px-4 py-2 text-slate-600"><Md>{v}</Md></td>
+                  <tr key={k} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
+                    <td className="px-5 py-3 font-mono text-xs text-slate-700 whitespace-nowrap">{k}</td>
+                    <td className="px-5 py-3 text-slate-600"><Md>{v}</Md></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
-        </div>
+        </section>
       )}
 
       {/* Common Pitfalls */}
       {practice.common_pitfalls?.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">常见陷阱</h3>
-          <ul className="space-y-2">
+        <section>
+          <SectionHeading color="amber">常见陷阱</SectionHeading>
+          <ul className="space-y-3">
             {practice.common_pitfalls.map((pitfall, i) => (
               <li
                 key={i}
-                className="flex gap-2 text-sm text-slate-700 bg-red-50 border border-red-100 rounded-lg p-3"
+                className="flex gap-3 text-sm text-slate-700 bg-red-50/70 border border-red-100 rounded-xl p-4"
               >
-                <span className="text-red-500 flex-shrink-0">!</span>
+                <span className="text-red-400 flex-shrink-0 text-lg leading-none mt-0.5">⚠</span>
                 <div className="flex-1"><Md>{pitfall}</Md></div>
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
 
       {/* Reproduction Checklist */}
       {practice.reproduction_checklist?.length > 0 && (
-        <div>
-          <h3 className="text-sm font-semibold text-slate-700 mb-3">复现清单</h3>
-          <ul className="space-y-1.5">
+        <section>
+          <SectionHeading>复现清单</SectionHeading>
+          <ul className="space-y-2.5">
             {practice.reproduction_checklist.map((item, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-slate-700">
-                <input type="checkbox" className="mt-1 rounded border-slate-300" />
+              <li key={i} className="flex items-start gap-3 text-sm text-slate-700 bg-slate-50 rounded-lg p-3">
+                <input type="checkbox" className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                 <div className="flex-1"><Md>{item}</Md></div>
               </li>
             ))}
           </ul>
-        </div>
+        </section>
       )}
     </div>
   )

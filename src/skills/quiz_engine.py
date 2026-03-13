@@ -114,15 +114,28 @@ class QuizEngine:
 
         questions = []
         for q in questions_data:
+            # Coerce correct_answer to int (LLM may return "" for non-MC questions)
+            raw_answer = q.get("correct_answer", 0)
+            try:
+                correct_answer = int(raw_answer) if raw_answer != "" else 0
+            except (ValueError, TypeError):
+                correct_answer = 0
+
+            # Clamp difficulty to valid range
+            try:
+                difficulty = max(1, min(5, int(q.get("difficulty", 3))))
+            except (ValueError, TypeError):
+                difficulty = 3
+
             questions.append(Question(
                 id=q.get("id", f"q{len(questions) + 1}"),
                 question_type=QuestionType(q.get("question_type", "multiple_choice")),
                 bloom_level=BloomLevel(q.get("bloom_level", "understand")),
                 question=q.get("question", ""),
-                difficulty=q.get("difficulty", 3),
+                difficulty=difficulty,
                 concept_id=q.get("concept_id", synthesis.concept_id),
                 options=q.get("options", []),
-                correct_answer=q.get("correct_answer", 0),
+                correct_answer=correct_answer,
                 solution_steps=q.get("solution_steps", []),
                 code_template=q.get("code_template", ""),
                 expected_solution=q.get("expected_solution", ""),

@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from pathlib import Path
+from typing import Type, TypeVar
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
+from pydantic import BaseModel
 
 from src.logging_config import get_logger
+
+T = TypeVar("T", bound=BaseModel)
 
 load_dotenv()
 
@@ -22,6 +27,17 @@ _MODEL_FAMILY_MAX_TOKENS: list[tuple[str, int]] = [
     ("claude-haiku", 8192),
 ]
 _DEFAULT_MAX_TOKENS = 8192
+
+
+def _resolve_int_env(name: str, default: int) -> int:
+    """Read an integer from an environment variable, falling back to *default*."""
+    val = os.environ.get(name, "").strip()
+    if val:
+        try:
+            return int(val)
+        except ValueError:
+            logger.warning("Invalid %s=%r, using default %d", name, val, default)
+    return default
 
 
 def _resolve_max_tokens(model: str) -> int:
@@ -51,6 +67,7 @@ class LLMClient:
     ):
         self.model = model
         self.max_tokens = max_tokens or _resolve_max_tokens(model)
+        self.max_continuations = _resolve_int_env("LLM_MAX_CONTINUATIONS", 3)
         self._client: Anthropic | None = None
 
         # Determine mode from env
@@ -103,25 +120,13 @@ class LLMClient:
 
         t0 = time.perf_counter()
         try:
-            # Use streaming to avoid SDK non-streaming timeout for large max_tokens
-            chunks: list[str] = []
-            input_tokens = 0
-            output_tokens = 0
-            stop_reason = ""
-            with self.client.messages.stream(**kwargs) as stream:
-                for text in stream.text_stream:
-                    chunks.append(text)
-                msg = stream.get_final_message()
-                input_tokens = msg.usage.input_tokens
-                output_tokens = msg.usage.output_tokens
-                stop_reason = msg.stop_reason
-
+            text, stop_reason, in_tok, out_tok = self._stream_collect(kwargs)
             elapsed = time.perf_counter() - t0
             logger.info(
                 "LLM response: %.1fs, input_tokens=%d, output_tokens=%d, stop=%s",
-                elapsed, input_tokens, output_tokens, stop_reason,
+                elapsed, in_tok, out_tok, stop_reason,
             )
-            return "".join(chunks)
+            return text
         except Exception as exc:
             elapsed = time.perf_counter() - t0
             logger.error("LLM request failed after %.1fs: %s", elapsed, exc)
@@ -147,6 +152,127 @@ class LLMClient:
             prompt, system=json_system, temperature=temperature,
             max_tokens=max_tokens,
         )
+
+    def generate_structured(
+        self,
+        prompt: str,
+        model_class: Type[T],
+        system: str = "",
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+    ) -> T:
+        """Generate a structured response validated against a Pydantic model.
+
+        Uses raw JSON mode with multi-turn continuation on truncation.
+        Structured output (output_config) is disabled due to high error rate
+        (grammar compilation timeouts, content truncation).
+        """
+        tokens = max_tokens or self.max_tokens
+        prompt_preview = prompt[:120].replace("\n", " ")
+        logger.info(
+            "LLM structured request: model=%s, schema=%s, max_tokens=%d, temp=%.1f, prompt=%s...",
+            self.model, model_class.__name__, tokens, temperature, prompt_preview,
+        )
+        return self._generate_json_with_continuation(
+            prompt, model_class, system, temperature, tokens,
+        )
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _stream_collect(self, kwargs: dict) -> tuple[str, str, int, int]:
+        """Stream an API call and return (text, stop_reason, input_tokens, output_tokens)."""
+        chunks: list[str] = []
+        with self.client.messages.stream(**kwargs) as stream:
+            for text in stream.text_stream:
+                chunks.append(text)
+            msg = stream.get_final_message()
+        return (
+            "".join(chunks),
+            msg.stop_reason,
+            msg.usage.input_tokens,
+            msg.usage.output_tokens,
+        )
+
+    def _generate_json_with_continuation(
+        self,
+        prompt: str,
+        model_class: Type[T],
+        system: str,
+        temperature: float,
+        max_tokens: int,
+        max_continuations: int | None = None,
+    ) -> T:
+        """Generate JSON with automatic multi-turn continuation on truncation.
+
+        Uses raw JSON mode (no output_config).  If the model hits max_tokens,
+        feeds the partial output back as an assistant turn and asks the model
+        to continue, up to *max_continuations* times (default from LLM_MAX_CONTINUATIONS env).
+        """
+        if max_continuations is None:
+            max_continuations = self.max_continuations
+        from src.utils.json_repair import repair_json
+
+        json_system = (system + "\n\n" if system else "") + (
+            "You must respond with valid JSON only. No markdown fences, no explanations, "
+            "just the JSON object/array."
+        )
+
+        messages: list[dict] = [{"role": "user", "content": prompt}]
+        accumulated = ""
+        total_in = 0
+        total_out = 0
+        t0 = time.perf_counter()
+
+        for attempt in range(1 + max_continuations):
+            kwargs: dict = {
+                "model": self.model,
+                "max_tokens": max_tokens,
+                "messages": messages,
+                "temperature": temperature,
+            }
+            if json_system:
+                kwargs["system"] = json_system
+
+            chunk_text, stop_reason, in_tok, out_tok = self._stream_collect(kwargs)
+            accumulated += chunk_text
+            total_in += in_tok
+            total_out += out_tok
+
+            elapsed = time.perf_counter() - t0
+            logger.info(
+                "LLM JSON continuation #%d: %.1fs, in=%d, out=%d, stop=%s, total_len=%d",
+                attempt, elapsed, in_tok, out_tok, stop_reason, len(accumulated),
+            )
+
+            if stop_reason != "max_tokens":
+                # Completed — parse and return
+                data = repair_json(accumulated)
+                return model_class.model_validate(data)
+
+            # Not done yet — set up continuation turn
+            messages = [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": accumulated},
+                {
+                    "role": "user",
+                    "content": (
+                        "Your JSON output was truncated. Continue writing the JSON "
+                        "from EXACTLY where you stopped. Do NOT repeat any text — "
+                        "just output the remaining characters to complete the JSON."
+                    ),
+                },
+            ]
+            logger.info("Output truncated, requesting continuation #%d...", attempt + 1)
+
+        # Exhausted all continuations — try to parse what we have
+        logger.warning(
+            "Exhausted %d continuations (total %d chars), attempting partial parse",
+            max_continuations, len(accumulated),
+        )
+        data = repair_json(accumulated)
+        return model_class.model_validate(data)
 
     def generate_with_template(
         self,

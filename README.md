@@ -78,6 +78,8 @@ LLM_PROXY_URL=http://localhost:8317
 | `SEMANTIC_SCHOLAR_API_KEY` | 否 | 提高论文搜索速率限制 |
 | `GITHUB_TOKEN` | 否 | 仓库质量指标 |
 | `LLM_MODEL` | 否 | 覆盖默认模型（默认 `claude-sonnet-4-20250514`） |
+| `LLM_MAX_TOKENS` | 否 | 覆盖最大输出 token 数（默认按模型：Opus 32000, Sonnet 16000） |
+| `LLM_MAX_CONTINUATIONS` | 否 | 输出截断时最大自动续写次数（默认 `3`） |
 | `API_HOST` | 否 | 后端地址（默认 `127.0.0.1`） |
 | `API_PORT` | 否 | 后端端口（默认 `8000`） |
 

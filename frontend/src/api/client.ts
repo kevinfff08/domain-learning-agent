@@ -148,6 +148,15 @@ export async function fetchChapterContent(
   } catch { return null }
 }
 
+export async function deleteChapterContent(
+  courseId: string,
+  chapterId: string,
+): Promise<void> {
+  await request(`/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}`, {
+    method: 'DELETE',
+  })
+}
+
 export function streamChapter(
   courseId: string,
   chapterId: string,

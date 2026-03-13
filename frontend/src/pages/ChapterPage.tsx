@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { useCourse } from '../contexts/CourseContext'
-import { fetchChapterContent, streamChapter } from '../api/client'
+import { fetchChapterContent, streamChapter, deleteChapterContent } from '../api/client'
 import type { ResearchSynthesis, ResourceCollection, VerificationReport, SSEEvent } from '../types'
 import ContentRenderer from '../components/ContentRenderer'
 import StepProgress from '../components/StepProgress'
@@ -19,6 +19,7 @@ export default function ChapterPage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [completedSteps, setCompletedSteps] = useState<number[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const cancelRef = useRef<(() => void) | null>(null)
 
   const chapter = textbook?.chapters.find((c) => c.id === chapterId)
@@ -100,6 +101,44 @@ export default function ChapterPage() {
     )
   }
 
+  const handleDelete = async () => {
+    if (!courseId || !chapterId) return
+    if (!window.confirm('确定要删除本章已生成的内容吗？删除后需要重新生成。')) return
+    setDeleting(true)
+    setError(null)
+    try {
+      await deleteChapterContent(courseId, chapterId)
+      setSynthesis(null)
+      setResources(null)
+      setVerification(null)
+      await refreshTextbook()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const handleRegenerate = async () => {
+    if (!courseId || !chapterId) return
+    if (!window.confirm('确定要重新生成本章内容吗？现有内容将被覆盖。')) return
+    setDeleting(true)
+    setError(null)
+    try {
+      await deleteChapterContent(courseId, chapterId)
+      setSynthesis(null)
+      setResources(null)
+      setVerification(null)
+      await refreshTextbook()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除失败')
+      setDeleting(false)
+      return
+    }
+    setDeleting(false)
+    handleGenerate()
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 text-slate-400">
@@ -172,14 +211,38 @@ export default function ChapterPage() {
       </div>
 
       {/* Chapter header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-slate-800">
-          {chapter ? `第 ${chapter.chapter_number} 章: ${chapter.title}` : '章节内容'}
-        </h1>
-        {chapter?.description && (
-          <p className="text-sm text-slate-400 mt-2">{chapter.description}</p>
-        )}
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">
+            {chapter ? `第 ${chapter.chapter_number} 章: ${chapter.title}` : '章节内容'}
+          </h1>
+          {chapter?.description && (
+            <p className="text-sm text-slate-400 mt-2">{chapter.description}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0 ml-4">
+          <button
+            onClick={handleRegenerate}
+            disabled={deleting || streaming}
+            className="text-xs px-3 py-1.5 rounded-md border border-blue-300 text-blue-600 hover:bg-blue-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {deleting ? '处理中...' : '重新生成'}
+          </button>
+          <button
+            onClick={handleDelete}
+            disabled={deleting || streaming}
+            className="text-xs px-3 py-1.5 rounded-md border border-red-300 text-red-600 hover:bg-red-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {deleting ? '删除中...' : '删除内容'}
+          </button>
+        </div>
       </div>
+
+      {error && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
 
       {/* Three-layer content */}
       {synthesis && <ContentRenderer synthesis={synthesis} />}

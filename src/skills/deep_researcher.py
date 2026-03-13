@@ -22,8 +22,11 @@ from src.models.content import (
     CrossConceptConnection,
     Equation,
     IntuitionLayer,
+    IntuitionResponse,
     MechanismLayer,
+    MechanismResponse,
     PracticeLayer,
+    PracticeResponse,
     ResearchSynthesis,
     SourceAttribution,
 )
@@ -309,43 +312,89 @@ class DeepResearcher:
     # Individual layer generators
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Content validation helpers
+    # ------------------------------------------------------------------
+
+    _MIN_FIELD_CHARS: dict[str, int] = {
+        # Minimum acceptable character count per field (prompt asks for 200-500 words)
+        "analogy": 400,
+        "why_it_matters": 200,
+        "key_insight": 150,
+        "theoretical_narrative": 500,
+        "mathematical_framework": 300,
+    }
+
+    @staticmethod
+    def _is_content_adequate(resp, min_chars: dict[str, int]) -> bool:
+        """Check whether key string fields meet minimum length thresholds."""
+        for field, threshold in min_chars.items():
+            val = getattr(resp, field, None)
+            if isinstance(val, str) and len(val) < threshold:
+                logger.warning(
+                    "Field '%s' too short: %d chars (min %d)",
+                    field, len(val), threshold,
+                )
+                return False
+        return True
+
+    # ------------------------------------------------------------------
+    # Individual layer generators (run via asyncio.to_thread for true parallelism)
+    # ------------------------------------------------------------------
+
     async def _generate_mechanism(
         self, ctx: dict[str, str], on_progress: ProgressCallback = None,
-    ) -> tuple[dict, list[SourceAttribution]]:
+    ) -> tuple[MechanismResponse, list[SourceAttribution]]:
         """Generate mechanism layer (call 1 — most important, runs first)."""
         if on_progress:
             await on_progress("Generating mechanism & theory layer (rigorous mathematical derivations)...")
 
         prompt = _MECHANISM_PROMPT.format(**ctx)
-        raw = self.llm.generate_json(prompt, system=_MECHANISM_SYSTEM, temperature=0.2)
-        data = repair_json(raw)
-
-        sources = [SourceAttribution(**s) for s in data.get("sources", [])]
-        return data, sources
+        resp = await asyncio.to_thread(
+            self.llm.generate_structured,
+            prompt, MechanismResponse, system=_MECHANISM_SYSTEM, temperature=0.2,
+        )
+        return resp, resp.sources
 
     async def _generate_intuition(
         self, ctx: dict[str, str], mechanism_summary: str, on_progress: ProgressCallback = None,
-    ) -> dict:
+        _max_retries: int = 2,
+    ) -> IntuitionResponse:
         """Generate intuition layer (call 2 — uses mechanism summary for consistency)."""
         if on_progress:
             await on_progress("Generating intuition & understanding layer (analogies, insights)...")
 
         ctx_with_mechanism = {**ctx, "mechanism_summary": mechanism_summary}
         prompt = _INTUITION_PROMPT.format(**ctx_with_mechanism)
-        raw = self.llm.generate_json(prompt, system=_INTUITION_SYSTEM, temperature=0.4)
-        return repair_json(raw)
+        checks = {k: v for k, v in self._MIN_FIELD_CHARS.items() if k in IntuitionResponse.model_fields}
+
+        for attempt in range(_max_retries + 1):
+            resp = await asyncio.to_thread(
+                self.llm.generate_structured,
+                prompt, IntuitionResponse, system=_INTUITION_SYSTEM, temperature=0.4,
+            )
+            if self._is_content_adequate(resp, checks):
+                return resp
+            if attempt < _max_retries:
+                logger.warning("Intuition layer content too short, retrying (%d/%d)...", attempt + 1, _max_retries)
+                if on_progress:
+                    await on_progress(f"Intuition content too short, retrying ({attempt + 1}/{_max_retries})...")
+        logger.warning("Intuition layer still short after %d retries, using best result", _max_retries)
+        return resp
 
     async def _generate_practice(
         self, ctx: dict[str, str], mechanism_summary: str, on_progress: ProgressCallback = None,
-    ) -> dict:
+    ) -> PracticeResponse:
         """Generate practice layer (call 3 — uses mechanism summary for consistency)."""
         if on_progress:
             await on_progress("Generating practice & implementation layer (code analysis, pitfalls)...")
 
         ctx_with_mechanism = {**ctx, "mechanism_summary": mechanism_summary}
         prompt = _PRACTICE_PROMPT.format(**ctx_with_mechanism)
-        raw = self.llm.generate_json(prompt, system=_PRACTICE_SYSTEM, temperature=0.2)
-        return repair_json(raw)
+        return await asyncio.to_thread(
+            self.llm.generate_structured,
+            prompt, PracticeResponse, system=_PRACTICE_SYSTEM, temperature=0.2,
+        )
 
     # ------------------------------------------------------------------
     # Main entry point
@@ -371,16 +420,16 @@ class DeepResearcher:
         if on_progress:
             await on_progress("Starting PhD-level content generation (3 specialized LLM calls)...")
 
-        mechanism_data, sources = await self._generate_mechanism(ctx, on_progress)
+        mechanism_resp, sources = await self._generate_mechanism(ctx, on_progress)
 
         # Build a short summary of the mechanism layer for the other two prompts
-        mechanism_summary = mechanism_data.get("mathematical_framework", "")[:500]
-        eq_names = [eq.get("name", "") for eq in mechanism_data.get("key_equations", [])[:5]]
+        mechanism_summary = mechanism_resp.mathematical_framework[:500]
+        eq_names = [eq.name for eq in mechanism_resp.key_equations[:5]]
         if eq_names:
             mechanism_summary += f"\nKey equations: {', '.join(eq_names)}"
 
         # --- Calls 2 & 3: Intuition + Practice (parallel) ---
-        intuition_data, practice_data = await asyncio.gather(
+        intuition_resp, practice_resp = await asyncio.gather(
             self._generate_intuition(ctx, mechanism_summary, on_progress),
             self._generate_practice(ctx, mechanism_summary, on_progress),
         )
@@ -393,34 +442,23 @@ class DeepResearcher:
             concept_id=chapter.id,
             title=chapter.title,
             intuition=IntuitionLayer(
-                analogy=intuition_data.get("analogy", ""),
-                why_it_matters=intuition_data.get("why_it_matters", ""),
-                key_insight=intuition_data.get("key_insight", ""),
+                analogy=intuition_resp.analogy,
+                why_it_matters=intuition_resp.why_it_matters,
+                key_insight=intuition_resp.key_insight,
             ),
             mechanism=MechanismLayer(
-                theoretical_narrative=mechanism_data.get("theoretical_narrative", ""),
-                mathematical_framework=mechanism_data.get("mathematical_framework", ""),
-                key_equations=[
-                    Equation(**eq) for eq in mechanism_data.get("key_equations", [])
-                ],
-                algorithms=[
-                    AlgorithmBlock(**alg) for alg in mechanism_data.get("algorithms", [])
-                ],
-                pseudocode=mechanism_data.get("pseudocode", ""),
-                algorithm_steps=mechanism_data.get("algorithm_steps", []),
-                connections=[
-                    CrossConceptConnection(**c)
-                    for c in mechanism_data.get("connections", [])
-                ],
+                theoretical_narrative=mechanism_resp.theoretical_narrative,
+                mathematical_framework=mechanism_resp.mathematical_framework,
+                key_equations=mechanism_resp.key_equations,
+                algorithms=mechanism_resp.algorithms,
+                connections=mechanism_resp.connections,
             ),
             practice=PracticeLayer(
-                code_analysis=[
-                    CodeAnalysis(**ca) for ca in practice_data.get("code_analysis", [])
-                ],
-                reference_implementations=practice_data.get("reference_implementations", []),
-                key_hyperparameters=practice_data.get("key_hyperparameters", {}),
-                common_pitfalls=practice_data.get("common_pitfalls", []),
-                reproduction_checklist=practice_data.get("reproduction_checklist", []),
+                code_analysis=practice_resp.code_analysis,
+                reference_implementations=practice_resp.reference_implementations,
+                key_hyperparameters=practice_resp.key_hyperparameters,
+                common_pitfalls=practice_resp.common_pitfalls,
+                reproduction_checklist=practice_resp.reproduction_checklist,
             ),
             sources=sources,
         )

@@ -97,6 +97,40 @@ class SourceAttribution(BaseModel):
     role: str = Field(default="reference", description="primary_source, builds_upon, reference")
 
 
+# ---------------------------------------------------------------------------
+# Response models for structured output (deep_researcher LLM calls)
+# ---------------------------------------------------------------------------
+
+
+class MechanismResponse(BaseModel):
+    """Schema for the mechanism layer LLM call response."""
+
+    theoretical_narrative: str = ""
+    mathematical_framework: str = ""
+    key_equations: list[Equation] = Field(default_factory=list)
+    algorithms: list[AlgorithmBlock] = Field(default_factory=list)
+    connections: list[CrossConceptConnection] = Field(default_factory=list)
+    sources: list[SourceAttribution] = Field(default_factory=list)
+
+
+class IntuitionResponse(BaseModel):
+    """Schema for the intuition layer LLM call response."""
+
+    analogy: str = ""
+    why_it_matters: str = ""
+    key_insight: str = ""
+
+
+class PracticeResponse(BaseModel):
+    """Schema for the practice layer LLM call response."""
+
+    code_analysis: list[CodeAnalysis] = Field(default_factory=list)
+    reference_implementations: list[str] = Field(default_factory=list)
+    key_hyperparameters: dict[str, str] = Field(default_factory=dict)
+    common_pitfalls: list[str] = Field(default_factory=list)
+    reproduction_checklist: list[str] = Field(default_factory=list)
+
+
 class ResearchSynthesis(BaseModel):
     """Complete research synthesis for a single concept, produced by Deep Researcher."""
 
