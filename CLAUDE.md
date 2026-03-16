@@ -71,7 +71,7 @@ conda activate research_tools
 pip install -e ".[dev]"
 
 # Development
-uvicorn src.api.app:app --reload                    # Backend (port 8000)
+python -m src.api.app                                # Backend (port 8000, auto-excludes data/)
 cd frontend && npm run dev                           # Frontend (port 5173)
 
 # CLI

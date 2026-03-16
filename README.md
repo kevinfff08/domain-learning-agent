@@ -105,7 +105,7 @@ start.bat
 ```bash
 # 终端 1: 后端
 conda activate research_tools
-uvicorn src.api.app:app --reload --reload-exclude data --reload-exclude output --reload-exclude logs --port 8000
+python -m src.api.app
 
 # 终端 2: 前端
 cd frontend

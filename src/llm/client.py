@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Type, TypeVar
 
 from dotenv import load_dotenv
-from anthropic import Anthropic
+from anthropic import Anthropic, APIStatusError, APIConnectionError, APITimeoutError
 from pydantic import BaseModel
 
 from src.logging_config import get_logger
@@ -153,6 +153,8 @@ class LLMClient:
             max_tokens=max_tokens,
         )
 
+    _STRUCTURED_MAX_RETRIES = 2  # retry on JSON parse / validation failures
+
     def generate_structured(
         self,
         prompt: str,
@@ -164,8 +166,8 @@ class LLMClient:
         """Generate a structured response validated against a Pydantic model.
 
         Uses raw JSON mode with multi-turn continuation on truncation.
-        Structured output (output_config) is disabled due to high error rate
-        (grammar compilation timeouts, content truncation).
+        Retries up to _STRUCTURED_MAX_RETRIES times on JSON parse or
+        validation failures (LLM sometimes returns malformed JSON).
         """
         tokens = max_tokens or self.max_tokens
         prompt_preview = prompt[:120].replace("\n", " ")
@@ -173,27 +175,63 @@ class LLMClient:
             "LLM structured request: model=%s, schema=%s, max_tokens=%d, temp=%.1f, prompt=%s...",
             self.model, model_class.__name__, tokens, temperature, prompt_preview,
         )
-        return self._generate_json_with_continuation(
-            prompt, model_class, system, temperature, tokens,
-        )
+        last_exc: Exception | None = None
+        for attempt in range(1 + self._STRUCTURED_MAX_RETRIES):
+            try:
+                return self._generate_json_with_continuation(
+                    prompt, model_class, system, temperature, tokens,
+                )
+            except (ValueError, Exception) as exc:
+                # ValueError from repair_json, ValidationError from pydantic
+                last_exc = exc
+                if attempt < self._STRUCTURED_MAX_RETRIES:
+                    logger.warning(
+                        "Structured generation failed (attempt %d/%d), retrying: %s",
+                        attempt + 1, 1 + self._STRUCTURED_MAX_RETRIES, exc,
+                    )
+                else:
+                    raise
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
+    _TRANSIENT_ERRORS = (APIStatusError, APIConnectionError, APITimeoutError)
+    _STREAM_MAX_RETRIES = 3
+    _STREAM_RETRY_BASE_DELAY = 2.0  # seconds, doubles each retry
+
     def _stream_collect(self, kwargs: dict) -> tuple[str, str, int, int]:
-        """Stream an API call and return (text, stop_reason, input_tokens, output_tokens)."""
-        chunks: list[str] = []
-        with self.client.messages.stream(**kwargs) as stream:
-            for text in stream.text_stream:
-                chunks.append(text)
-            msg = stream.get_final_message()
-        return (
-            "".join(chunks),
-            msg.stop_reason,
-            msg.usage.input_tokens,
-            msg.usage.output_tokens,
-        )
+        """Stream an API call and return (text, stop_reason, input_tokens, output_tokens).
+
+        Retries automatically on transient API errors (connection drops,
+        unexpected EOF, timeouts) with exponential backoff.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(self._STREAM_MAX_RETRIES):
+            try:
+                chunks: list[str] = []
+                with self.client.messages.stream(**kwargs) as stream:
+                    for text in stream.text_stream:
+                        chunks.append(text)
+                    msg = stream.get_final_message()
+                return (
+                    "".join(chunks),
+                    msg.stop_reason,
+                    msg.usage.input_tokens,
+                    msg.usage.output_tokens,
+                )
+            except self._TRANSIENT_ERRORS as exc:
+                last_exc = exc
+                # Don't retry on 4xx client errors (bad request, auth, etc.)
+                if isinstance(exc, APIStatusError) and 400 <= exc.status_code < 500:
+                    raise
+                delay = self._STREAM_RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "Transient API error (attempt %d/%d), retrying in %.1fs: %s",
+                    attempt + 1, self._STREAM_MAX_RETRIES, delay, exc,
+                )
+                time.sleep(delay)
+        raise last_exc  # type: ignore[misc]
 
     def _generate_json_with_continuation(
         self,
