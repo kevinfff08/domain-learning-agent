@@ -1,16 +1,26 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useCourse } from '../contexts/CourseContext'
-import { buildOutline, generateAllChapters } from '../api/client'
-import type { SSEEvent } from '../types'
+import { buildOutline, generateAllChapters, pauseBatchGeneration, streamChapter } from '../api/client'
+import type { SSEEvent, Chapter } from '../types'
 import StepProgress from '../components/StepProgress'
 
 const chapterStatusConfig: Record<string, { icon: string; color: string; label: string }> = {
   pending: { icon: '', color: 'text-slate-300', label: '待生成' },
   generating: { icon: '', color: 'text-amber-500', label: '生成中' },
+  interrupted: { icon: '', color: 'text-orange-500', label: '已中断' },
   ready: { icon: '', color: 'text-blue-500', label: '已就绪' },
   in_progress: { icon: '', color: 'text-yellow-500', label: '学习中' },
   completed: { icon: '', color: 'text-green-500', label: '已完成' },
+}
+
+/** Map backend step_id strings to StepProgress step numbers */
+const STEP_ID_TO_NUM: Record<string, number> = {
+  deep_research: 1,
+  accuracy_verify: 2,
+  resource_curate: 3,
+  quiz_generate: 4,
+  practice_generate: 5,
 }
 
 function DifficultyStars({ level }: { level: number }) {
@@ -54,6 +64,13 @@ function StatusIcon({ status }: { status: string }) {
       </svg>
     )
   }
+  if (status === 'interrupted') {
+    return (
+      <svg className="w-5 h-5 text-orange-500" fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+      </svg>
+    )
+  }
   if (status === 'in_progress') {
     return (
       <svg className="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
@@ -67,15 +84,51 @@ function StatusIcon({ status }: { status: string }) {
   )
 }
 
+/** Auto-scroll a container to the bottom when content changes */
+function useAutoScroll(dep: unknown) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.scrollTop = ref.current.scrollHeight
+    }
+  }, [dep])
+  return ref
+}
+
 export default function TextbookPage() {
   const { courseId, textbook, loading, refreshTextbook, refreshCourse } = useCourse()
   const [building, setBuilding] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [pausing, setPausing] = useState(false)
   const [messages, setMessages] = useState<string[]>([])
   const [currentStep, setCurrentStep] = useState(0)
   const [completedSteps, setCompletedSteps] = useState<number[]>([])
   const [error, setError] = useState<string | null>(null)
   const cancelRef = useRef<(() => void) | null>(null)
+  // Track chapter statuses locally during batch/single generation for real-time updates
+  const [chapterOverrides, setChapterOverrides] = useState<Record<string, Chapter['status']>>({})
+  // Which chapter is currently being generated (for showing inline progress)
+  const [activeGeneratingChapterId, setActiveGeneratingChapterId] = useState<string | null>(null)
+
+  const logRef = useAutoScroll(messages)
+
+  /** Parse SSE step events and update StepProgress state */
+  const handleStepEvent = useCallback((stepId: string) => {
+    const stepNum = STEP_ID_TO_NUM[stepId]
+    if (stepNum) {
+      // Mark previous steps as completed, set current
+      setCompletedSteps((prev) => {
+        const completed = new Set(prev)
+        for (let i = 1; i < stepNum; i++) completed.add(i)
+        return [...completed]
+      })
+      setCurrentStep(stepNum)
+    }
+    if (stepId === 'complete') {
+      setCompletedSteps([1, 2, 3, 4, 5])
+      setCurrentStep(0)
+    }
+  }, [])
 
   const handleBuildOutline = () => {
     setBuilding(true)
@@ -118,12 +171,46 @@ export default function TextbookPage() {
 
   const handleGenerateAll = () => {
     setGenerating(true)
+    setPausing(false)
     setMessages([])
     setError(null)
+    setChapterOverrides({})
+    setCurrentStep(0)
+    setCompletedSteps([])
+    setActiveGeneratingChapterId(null)
 
     const handleEvent = (event: SSEEvent) => {
-      const msg = (event.data as { message?: string }).message
-      if (msg) setMessages((prev) => [...prev, msg])
+      if (event.event === 'chapter_complete') {
+        const chapterId = (event.data as { chapter_id?: string }).chapter_id
+        if (chapterId) {
+          setChapterOverrides((prev) => ({ ...prev, [chapterId]: 'ready' }))
+          // Reset step progress for next chapter
+          setCurrentStep(0)
+          setCompletedSteps([])
+          setMessages([])
+        }
+      }
+      if (event.event === 'step_progress') {
+        const msg = (event.data as { message?: string }).message
+        const step = (event.data as { step?: string }).step
+        if (msg) setMessages((prev) => [...prev, msg])
+
+        if (step && step !== 'batch_progress' && step !== 'batch_paused') {
+          handleStepEvent(step)
+        }
+
+        // When deep_research step starts for a chapter, mark it as generating
+        if (step === 'deep_research' && msg) {
+          const chapters = textbook?.chapters ?? []
+          for (const ch of chapters) {
+            if (msg.includes(ch.title)) {
+              setChapterOverrides((prev) => ({ ...prev, [ch.id]: 'generating' }))
+              setActiveGeneratingChapterId(ch.id)
+              break
+            }
+          }
+        }
+      }
     }
 
     cancelRef.current = generateAllChapters(
@@ -133,13 +220,69 @@ export default function TextbookPage() {
         await refreshTextbook()
         await refreshCourse()
         setGenerating(false)
+        setPausing(false)
+        setChapterOverrides({})
+        setActiveGeneratingChapterId(null)
+        setCurrentStep(0)
+        setCompletedSteps([])
       },
       (err) => {
         setError(err.message)
         setGenerating(false)
+        setPausing(false)
+        setChapterOverrides({})
+        setActiveGeneratingChapterId(null)
       },
     )
   }
+
+  const handlePause = useCallback(async () => {
+    setPausing(true)
+    try {
+      await pauseBatchGeneration(courseId)
+    } catch {
+      // If pause fails (e.g., already done), ignore
+    }
+  }, [courseId])
+
+  const handleContinueChapter = useCallback((chapterId: string) => {
+    setChapterOverrides((prev) => ({ ...prev, [chapterId]: 'generating' }))
+    setActiveGeneratingChapterId(chapterId)
+    setMessages([])
+    setError(null)
+    setCurrentStep(0)
+    setCompletedSteps([])
+
+    cancelRef.current = streamChapter(
+      courseId,
+      chapterId,
+      (event: SSEEvent) => {
+        if (event.event === 'step_progress') {
+          const msg = (event.data as { message?: string }).message
+          const step = (event.data as { step?: string }).step
+          if (msg) setMessages((prev) => [...prev, msg])
+          if (step) handleStepEvent(step)
+        }
+      },
+      async () => {
+        setChapterOverrides((prev) => ({ ...prev, [chapterId]: 'ready' }))
+        setActiveGeneratingChapterId(null)
+        setCurrentStep(0)
+        setCompletedSteps([])
+        await refreshTextbook()
+        setMessages([])
+      },
+      (err) => {
+        setError(err.message)
+        setActiveGeneratingChapterId(null)
+        setChapterOverrides((prev) => {
+          const next = { ...prev }
+          delete next[chapterId]
+          return next
+        })
+      },
+    )
+  }, [courseId, refreshTextbook, handleStepEvent])
 
   if (loading) {
     return (
@@ -195,9 +338,21 @@ export default function TextbookPage() {
     )
   }
 
-  // Has textbook
+  // Has textbook - compute effective status for each chapter
+  const getEffectiveStatus = (chapter: Chapter): Chapter['status'] => {
+    return chapterOverrides[chapter.id] ?? chapter.status
+  }
+
   const completedCount = textbook.chapters.filter((c) => c.status === 'completed').length
-  const readyOrDoneCount = textbook.chapters.filter((c) => c.has_content).length
+  const needsGeneration = textbook.chapters.some(
+    (c) => c.status === 'pending' || c.status === 'interrupted',
+  )
+  const isAnyGenerating = generating || activeGeneratingChapterId !== null
+
+  // Find the chapter currently being generated
+  const activeChapter = activeGeneratingChapterId
+    ? textbook.chapters.find((c) => c.id === activeGeneratingChapterId)
+    : null
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -211,25 +366,47 @@ export default function TextbookPage() {
 
       {/* Actions */}
       <div className="flex items-center gap-3 mb-6">
-        {readyOrDoneCount < textbook.chapters.length && (
+        {needsGeneration && !isAnyGenerating && (
           <button
             onClick={handleGenerateAll}
-            disabled={generating}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
           >
-            {generating ? '生成中...' : '一键生成全部内容'}
+            一键生成全部内容
+          </button>
+        )}
+        {generating && (
+          <button
+            onClick={handlePause}
+            disabled={pausing}
+            className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {pausing ? '正在暂停…' : '暂停生成'}
           </button>
         )}
       </div>
 
-      {/* Generation progress */}
-      {generating && messages.length > 0 && (
-        <div className="mb-6 bg-slate-900 rounded-lg p-4 max-h-48 overflow-y-auto">
-          {messages.map((msg, i) => (
-            <p key={i} className="text-xs text-green-400 font-mono leading-relaxed">
-              {msg}
-            </p>
-          ))}
+      {/* Generation progress panel — shown during batch or single chapter generation */}
+      {isAnyGenerating && (
+        <div className="mb-6 bg-white rounded-xl border border-slate-200 p-5">
+          {activeChapter && (
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">
+              正在生成: {activeChapter.title}
+            </h3>
+          )}
+          <StepProgress currentStep={currentStep} completedSteps={completedSteps} />
+          <div
+            ref={logRef}
+            className="mt-4 bg-slate-900 rounded-lg p-4 max-h-48 overflow-y-auto"
+          >
+            {messages.map((msg, i) => (
+              <p key={i} className="text-xs text-green-400 font-mono leading-relaxed">
+                {msg}
+              </p>
+            ))}
+            {messages.length === 0 && (
+              <p className="text-xs text-slate-500 font-mono">等待服务器响应...</p>
+            )}
+          </div>
         </div>
       )}
 
@@ -246,23 +423,28 @@ export default function TextbookPage() {
         </div>
         <div className="divide-y divide-slate-100">
           {textbook.chapters.map((chapter) => {
-            const cfg = chapterStatusConfig[chapter.status] ?? chapterStatusConfig.pending
+            const effectiveStatus = getEffectiveStatus(chapter)
+            const cfg = chapterStatusConfig[effectiveStatus] ?? chapterStatusConfig.pending
+            const isInterrupted = effectiveStatus === 'interrupted'
+
             return (
-              <Link
+              <div
                 key={chapter.id}
-                to={`/courses/${courseId}/chapters/${chapter.id}`}
                 className="flex items-center gap-4 px-5 py-3.5 hover:bg-blue-50/50 transition-colors group"
               >
                 {/* Status icon */}
-                <StatusIcon status={chapter.status} />
+                <StatusIcon status={effectiveStatus} />
 
                 {/* Number */}
                 <span className="text-sm font-mono text-slate-400 w-8 text-right flex-shrink-0">
                   {chapter.chapter_number}
                 </span>
 
-                {/* Title + meta */}
-                <div className="flex-1 min-w-0">
+                {/* Title + meta (clickable link) */}
+                <Link
+                  to={`/courses/${courseId}/chapters/${chapter.id}`}
+                  className="flex-1 min-w-0"
+                >
                   <h3 className="text-sm font-medium text-slate-800 group-hover:text-blue-600 transition-colors truncate">
                     {chapter.title}
                   </h3>
@@ -271,7 +453,20 @@ export default function TextbookPage() {
                       {chapter.key_topics.join(' / ')}
                     </p>
                   )}
-                </div>
+                </Link>
+
+                {/* Continue button for interrupted chapters */}
+                {isInterrupted && !isAnyGenerating && (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      handleContinueChapter(chapter.id)
+                    }}
+                    className="text-xs px-3 py-1 rounded-md bg-orange-100 text-orange-700 hover:bg-orange-200 transition-colors flex-shrink-0"
+                  >
+                    继续生成
+                  </button>
+                )}
 
                 {/* Difficulty */}
                 <DifficultyStars level={chapter.difficulty} />
@@ -285,7 +480,7 @@ export default function TextbookPage() {
                 <span className={`text-xs w-14 text-right flex-shrink-0 ${cfg.color}`}>
                   {cfg.label}
                 </span>
-              </Link>
+              </div>
             )
           })}
         </div>

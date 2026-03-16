@@ -95,6 +95,7 @@ GET/DELETE      /api/courses/{id}
 GET             /api/courses/{id}/textbook               教科书大纲
 GET (SSE)       /api/courses/{id}/textbook/build          构建大纲
 GET (SSE)       /api/courses/{id}/textbook/generate       批量生成章节
+POST            /api/courses/{id}/textbook/generate/pause 暂停批量生成
 GET             /api/courses/{id}/chapters/{ch}           章节内容
 GET (SSE)       /api/courses/{id}/chapters/{ch}/stream    生成单章
 DELETE          /api/courses/{id}/chapters/{ch}           删除章节内容
@@ -114,6 +115,8 @@ POST            /api/courses/{id}/export
 - 所有数据结构使用 Pydantic v2 models，所有函数需要类型标注
 - SSE (Server-Sent Events) 用于长时间运行的操作
 - 章节生成支持进度恢复：中间结果逐步保存，失败后重试跳过已完成步骤
+- 章节状态流转：pending → generating → ready → in_progress → completed；生成中断则变为 interrupted
+- 服务启动时自动将 generating 状态的章节恢复为 interrupted，前端通过 boot-time 轮询检测服务重启
 - 日志使用 `src/logging_config.py` 统一配置，模块级 logger
 - Frontend 使用 React Router 进行课程级导航
 - Markdown 渲染使用 react-markdown + remark-gfm + remark-math + rehype-katex
@@ -130,6 +133,8 @@ Store in `.env` file (gitignored):
 | `LLM_MODEL` | 覆盖默认模型 | 否 |
 | `LLM_MAX_TOKENS` | 覆盖最大输出 token | 否 |
 | `LLM_MAX_CONTINUATIONS` | 截断时最大续写次数 | 否 (默认 3) |
+| `VERIFICATION_ENABLED` | 启用/关闭准确性验证步骤 | 否 (默认 true) |
+| `VERIFICATION_MODEL` | 验证步骤使用的模型 (可与生成模型不同) | 否 (默认同 LLM_MODEL) |
 | `TAVILY_API_KEY` | Web 搜索 (大纲生成) | 否 |
 | `SEMANTIC_SCHOLAR_API_KEY` | 论文搜索增强 | 否 |
 | `GITHUB_TOKEN` | GitHub API rate limit | 否 |

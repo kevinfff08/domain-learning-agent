@@ -7,7 +7,10 @@ PhD 级 AI 研究领域自学系统。输入一个研究领域，系统自动搜
 - **多课程管理** — 创建、切换、删除不同领域的学习课程
 - **智能教材生成** — 多源搜索（Tavily 网络搜索 + OpenAlex/arXiv 论文），LLM 结合论文、教程、博客生成 15-30 章教材大纲
 - **三层内容体系** — 每章包含直觉层（深度类比/核心洞察/重要性分析）、机制层（连续数学叙述/严格推导/学术算法块）、实践层（代码分析/逐行注释/设计决策/超参数指南）
-- **准确性验证** — 自动交叉验证生成内容的关键声明
+- **准确性验证** — 自动交叉验证生成内容的关键声明（可关闭，支持独立模型配置）
+- **批量生成控制** — 一键生成全部章节，支持暂停/继续，实时显示每章进度
+- **中断恢复** — 服务重启后自动识别中断的章节，支持从断点继续生成
+- **服务状态监控** — 前端自动检测后端重启并通知用户
 - **自适应学习** — 根据测验表现动态调整内容难度和解释方式
 - **间隔重复 (FSRS)** — 基于 FSRS-6 算法的闪卡复习系统
 - **多格式导出** — Obsidian 笔记库、Anki 卡组、PDF
@@ -80,6 +83,8 @@ LLM_PROXY_URL=http://localhost:8317
 | `LLM_MODEL` | 否 | 覆盖默认模型（默认 `claude-sonnet-4-20250514`） |
 | `LLM_MAX_TOKENS` | 否 | 覆盖最大输出 token 数（默认按模型：Opus 32000, Sonnet 16000） |
 | `LLM_MAX_CONTINUATIONS` | 否 | 输出截断时最大自动续写次数（默认 `3`） |
+| `VERIFICATION_ENABLED` | 否 | 启用/关闭准确性验证步骤（默认 `true`，设为 `false` 跳过） |
+| `VERIFICATION_MODEL` | 否 | 验证步骤使用的模型（默认同 `LLM_MODEL`，可设为更便宜的模型） |
 | `API_HOST` | 否 | 后端地址（默认 `127.0.0.1`） |
 | `API_PORT` | 否 | 后端端口（默认 `8000`） |
 
@@ -113,7 +118,10 @@ npm run dev
 
 - 课程列表与管理（创建/切换/删除）
 - 教材大纲预览与编号章节导航
-- 实时内容生成进度（SSE 流式传输）
+- 实时内容生成进度（SSE 流式传输 + 5 步进度指示器）
+- 批量生成控制（暂停/继续，每章实时状态更新）
+- 中断章节恢复（服务重启后自动标记，一键继续生成）
+- 服务重启通知横幅
 - 三层内容渲染（KaTeX 数学公式 + 语法高亮代码）
 - 章节测验与即时反馈
 - 闪卡复习（3D 翻转动画 + FSRS 调度）
@@ -366,6 +374,7 @@ GET/DELETE      /api/courses/{id}
 GET             /api/courses/{id}/textbook              教材大纲
 GET (SSE)       /api/courses/{id}/textbook/build        生成大纲（流式）
 GET (SSE)       /api/courses/{id}/textbook/generate     批量生成章节（流式）
+POST            /api/courses/{id}/textbook/generate/pause  暂停批量生成
 GET             /api/courses/{id}/chapters/{ch}          章节内容
 GET (SSE)       /api/courses/{id}/chapters/{ch}/stream   生成单章（流式）
 POST            /api/courses/{id}/chapters/{ch}/quiz/submit  提交测验
@@ -374,6 +383,7 @@ POST            /api/courses/{id}/review/{card}          复习闪卡
 GET             /api/courses/{id}/progress               学习进度
 POST            /api/courses/{id}/export                 导出材料
 GET             /api/status                              系统状态
+GET             /api/boot-time                           服务启动时间（重启检测）
 ```
 
 ## API 集成

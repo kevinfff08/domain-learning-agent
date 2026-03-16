@@ -147,7 +147,7 @@ export default function ChapterPage() {
     )
   }
 
-  // No content yet
+  // No content yet (or interrupted)
   if (!chapter?.has_content && !synthesis) {
     return (
       <div className="max-w-3xl mx-auto">
@@ -182,12 +182,19 @@ export default function ChapterPage() {
               </div>
             </div>
           ) : (
-            <button
-              onClick={handleGenerate}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
-            >
-              生成本章内容
-            </button>
+            <div className="flex flex-col items-center gap-3">
+              {chapter?.status === 'interrupted' && (
+                <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-sm text-orange-700 mb-2">
+                  本章内容生成曾被中断，点击下方按钮继续生成（已完成的步骤将自动跳过）
+                </div>
+              )}
+              <button
+                onClick={handleGenerate}
+                className="bg-blue-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+              >
+                {chapter?.status === 'interrupted' ? '继续生成' : '生成本章内容'}
+              </button>
+            </div>
           )}
 
           {error && (

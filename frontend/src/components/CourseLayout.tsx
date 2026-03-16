@@ -5,6 +5,7 @@ function StatusDot({ status }: { status: string }) {
   const colors: Record<string, string> = {
     pending: 'bg-slate-300',
     generating: 'bg-amber-400 animate-pulse',
+    interrupted: 'bg-orange-400',
     ready: 'bg-blue-400',
     in_progress: 'bg-yellow-400',
     completed: 'bg-green-400',

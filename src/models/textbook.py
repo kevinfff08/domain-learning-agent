@@ -13,6 +13,7 @@ class ChapterStatus(str, Enum):
 
     PENDING = "pending"
     GENERATING = "generating"
+    INTERRUPTED = "interrupted"
     READY = "ready"
     IN_PROGRESS = "in_progress"
     COMPLETED = "completed"

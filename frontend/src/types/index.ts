@@ -19,7 +19,7 @@ export interface Chapter {
   description: string
   difficulty: number
   estimated_hours: number
-  status: 'pending' | 'generating' | 'ready' | 'in_progress' | 'completed'
+  status: 'pending' | 'generating' | 'interrupted' | 'ready' | 'in_progress' | 'completed'
   mastery: number
   has_content: boolean
   quiz_score: number | null

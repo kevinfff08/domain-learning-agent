@@ -35,7 +35,7 @@ function sseStream(
 ): () => void {
   const evtSource = new EventSource(url)
 
-  const namedEvents = ['step_progress', 'step_start', 'step_complete', 'complete', 'error']
+  const namedEvents = ['step_progress', 'step_start', 'step_complete', 'chapter_complete', 'paused', 'complete', 'error']
   for (const evtName of namedEvents) {
     evtSource.addEventListener(evtName, (e) => {
       try {
@@ -44,7 +44,7 @@ function sseStream(
       } catch {
         onEvent({ event: evtName, data: { raw: (e as MessageEvent).data } })
       }
-      if (evtName === 'complete') {
+      if (evtName === 'complete' || evtName === 'paused') {
         evtSource.close()
         onDone?.()
       }
@@ -78,6 +78,11 @@ function sseStream(
 // ---- Status ----
 export async function fetchStatus(): Promise<Record<string, unknown>> {
   return request<Record<string, unknown>>('/status')
+}
+
+export async function fetchBootTime(): Promise<number> {
+  const res = await request<{ boot_time: number }>('/boot-time')
+  return res.boot_time
 }
 
 // ---- Assessment ----
@@ -136,6 +141,12 @@ export function generateAllChapters(
   onError?: (err: Error) => void,
 ): () => void {
   return sseStream(`${BASE}/courses/${encodeURIComponent(courseId)}/textbook/generate`, onEvent, onDone, onError)
+}
+
+export async function pauseBatchGeneration(courseId: string): Promise<void> {
+  await request(`/courses/${encodeURIComponent(courseId)}/textbook/generate/pause`, {
+    method: 'POST',
+  })
 }
 
 // ---- Chapters ----

@@ -15,10 +15,13 @@ load_dotenv()
 @lru_cache()
 def get_orchestrator() -> LearningOrchestrator:
     """Create a singleton orchestrator instance."""
+    verification_enabled = os.environ.get("VERIFICATION_ENABLED", "true").strip().lower() not in ("false", "0", "no")
     return LearningOrchestrator(
         data_dir=os.environ.get("DATA_DIR", "data"),
         api_key=os.environ.get("ANTHROPIC_API_KEY"),
         s2_api_key=os.environ.get("SEMANTIC_SCHOLAR_API_KEY"),
         github_token=os.environ.get("GITHUB_TOKEN"),
         llm_model=os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514"),
+        verification_enabled=verification_enabled,
+        verification_model=os.environ.get("VERIFICATION_MODEL"),
     )

@@ -92,6 +92,10 @@ async def build_outline(
 
 # ── Batch chapter generation ─────────────────────────────────────────
 
+# Active batch generation cancel events, keyed by course_id
+_batch_cancel_events: dict[str, asyncio.Event] = {}
+
+
 @router.get("/courses/{course_id}/textbook/generate")
 async def generate_all_chapters(
     course_id: str,
@@ -100,6 +104,10 @@ async def generate_all_chapters(
     """Generate content for all pending chapters via SSE."""
     logger.info("GET /courses/%s/textbook/generate — batch generation", course_id)
 
+    # Create cancellation event for this batch
+    cancel_event = asyncio.Event()
+    _batch_cancel_events[course_id] = cancel_event
+
     async def event_generator():
         progress_queue: asyncio.Queue[tuple[str, str]] = asyncio.Queue()
 
@@ -107,39 +115,74 @@ async def generate_all_chapters(
             progress_queue.put_nowait((step_id, message))
 
         gen_task = asyncio.create_task(
-            orch.generate_all_chapters(course_id, on_progress=_on_progress)
+            orch.generate_all_chapters(
+                course_id, on_progress=_on_progress, cancel_event=cancel_event,
+            )
         )
 
-        while not gen_task.done():
-            try:
-                step_id, message = await asyncio.wait_for(
-                    progress_queue.get(), timeout=0.5
-                )
-                yield {
-                    "event": "step_progress",
-                    "data": json.dumps({"step": step_id, "message": message}),
-                }
-            except (asyncio.TimeoutError, TimeoutError):
-                continue
-
-        while not progress_queue.empty():
-            step_id, message = progress_queue.get_nowait()
-            yield {
-                "event": "step_progress",
-                "data": json.dumps({"step": step_id, "message": message}),
-            }
-
         try:
-            gen_task.result()
-            yield {
-                "event": "complete",
-                "data": json.dumps({"message": "全部章节生成完毕"}),
-            }
-        except Exception as exc:
-            logger.error("Batch generation failed: %s", exc, exc_info=True)
-            yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+            while not gen_task.done():
+                try:
+                    step_id, message = await asyncio.wait_for(
+                        progress_queue.get(), timeout=0.5
+                    )
+                    # Emit chapter_complete as a dedicated event type
+                    if step_id == "chapter_complete":
+                        yield {
+                            "event": "chapter_complete",
+                            "data": json.dumps({"chapter_id": message}),
+                        }
+                    else:
+                        yield {
+                            "event": "step_progress",
+                            "data": json.dumps({"step": step_id, "message": message}),
+                        }
+                except (asyncio.TimeoutError, TimeoutError):
+                    continue
+
+            while not progress_queue.empty():
+                step_id, message = progress_queue.get_nowait()
+                if step_id == "chapter_complete":
+                    yield {
+                        "event": "chapter_complete",
+                        "data": json.dumps({"chapter_id": message}),
+                    }
+                else:
+                    yield {
+                        "event": "step_progress",
+                        "data": json.dumps({"step": step_id, "message": message}),
+                    }
+
+            try:
+                gen_task.result()
+                if cancel_event.is_set():
+                    yield {
+                        "event": "paused",
+                        "data": json.dumps({"message": "生成已暂停"}),
+                    }
+                else:
+                    yield {
+                        "event": "complete",
+                        "data": json.dumps({"message": "全部章节生成完毕"}),
+                    }
+            except Exception as exc:
+                logger.error("Batch generation failed: %s", exc, exc_info=True)
+                yield {"event": "error", "data": json.dumps({"message": str(exc)})}
+        finally:
+            _batch_cancel_events.pop(course_id, None)
 
     return EventSourceResponse(event_generator())
+
+
+@router.post("/courses/{course_id}/textbook/generate/pause")
+async def pause_batch_generation(course_id: str):
+    """Signal the running batch generation to pause after the current chapter."""
+    cancel_event = _batch_cancel_events.get(course_id)
+    if cancel_event:
+        cancel_event.set()
+        logger.info("Pause requested for batch generation: %s", course_id)
+        return {"message": "暂停信号已发送，将在当前章节完成后停止"}
+    raise HTTPException(status_code=404, detail="No active batch generation for this course")
 
 
 # ── Single chapter ───────────────────────────────────────────────────

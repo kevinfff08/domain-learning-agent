@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -48,10 +49,13 @@ class LearningOrchestrator:
         s2_api_key: str | None = None,
         github_token: str | None = None,
         llm_model: str = "claude-sonnet-4-20250514",
+        verification_enabled: bool = True,
+        verification_model: str | None = None,
     ):
         self.store = LocalStore(data_dir)
         logger.info("Orchestrator init: data_dir=%s, model=%s", data_dir, llm_model)
         self.llm = LLMClient(api_key=api_key, model=llm_model)
+        self.verification_enabled = verification_enabled
 
         # API clients
         cache_dir = self.store.cache_dir
@@ -74,8 +78,14 @@ class LearningOrchestrator:
             self.llm, self.store,
             semantic_scholar=self.s2, arxiv=self.arxiv,
         )
+        # Use a separate LLM client for verification if a different model is configured
+        if verification_model and verification_model != llm_model:
+            verification_llm = LLMClient(api_key=api_key, model=verification_model)
+            logger.info("Verification using separate model: %s", verification_model)
+        else:
+            verification_llm = self.llm
         self.verifier = AccuracyVerifier(
-            self.llm, self.store,
+            verification_llm, self.store,
             semantic_scholar=self.s2, crossref=self.crossref,
         )
         self.curator = ResourceCurator(
@@ -271,14 +281,18 @@ class LearningOrchestrator:
             )
             self.store.save_course_content(course_id, chapter_id, "research_synthesis.json", synthesis)
 
-        # Step 2: Accuracy Verification
-        report = _load("verification_report.json", _VR)
-        if report:
-            _emit("accuracy_verify", "已有核验报告，跳过")
+        # Step 2: Accuracy Verification (can be disabled via VERIFICATION_ENABLED=false)
+        if self.verification_enabled:
+            report = _load("verification_report.json", _VR)
+            if report:
+                _emit("accuracy_verify", "已有核验报告，跳过")
+            else:
+                _emit("accuracy_verify", "正在核验内容准确性…")
+                report = await self.verifier.verify(synthesis)
+                self.store.save_course_content(course_id, chapter_id, "verification_report.json", report)
         else:
-            _emit("accuracy_verify", "正在核验内容准确性…")
-            report = await self.verifier.verify(synthesis)
-            self.store.save_course_content(course_id, chapter_id, "verification_report.json", report)
+            report = None
+            _emit("accuracy_verify", "准确性验证已关闭，跳过")
 
         # Step 3: Resource Curation
         resources = _load("resources.json", _RC)
@@ -364,8 +378,13 @@ class LearningOrchestrator:
         self,
         course_id: str,
         on_progress: Callable[[str, str], None] | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
-        """Generate content for all pending chapters in order."""
+        """Generate content for all pending/interrupted chapters in order.
+
+        Args:
+            cancel_event: If set, generation stops after the current chapter finishes.
+        """
         textbook = self.store.load_course_model(course_id, "textbook.json", Textbook)
         if not textbook:
             raise ValueError(f"No textbook for course '{course_id}'")
@@ -377,12 +396,25 @@ class LearningOrchestrator:
             course.updated_at = datetime.now()
             self.store.save_course_model(course_id, "course.json", course)
 
-        pending = [ch for ch in textbook.chapters if ch.status == ChapterStatus.PENDING]
+        pending = [
+            ch for ch in textbook.chapters
+            if ch.status in (ChapterStatus.PENDING, ChapterStatus.INTERRUPTED)
+        ]
         total = len(pending)
         for i, chapter in enumerate(pending, 1):
+            # Check for cancellation before starting each chapter
+            if cancel_event and cancel_event.is_set():
+                logger.info("Batch generation paused by user after %d/%d chapters", i - 1, total)
+                if on_progress:
+                    on_progress("batch_paused", f"已暂停，完成 {i - 1}/{total} 章")
+                break
+
             if on_progress:
                 on_progress("batch_progress", f"[{i}/{total}] 正在生成: {chapter.title}")
             await self.generate_chapter(course_id, chapter.id, on_progress)
+            # Emit chapter_complete event so frontend can update individual status
+            if on_progress:
+                on_progress("chapter_complete", chapter.id)
 
         # Update course status
         if course:

@@ -26,8 +26,48 @@ async def lifespan(app: FastAPI):
     llm_mode = os.environ.get("LLM_MODE", "api-key")
     llm_model = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
     logger.info("FastAPI server starting — LLM_MODE=%s, LLM_MODEL=%s", llm_mode, llm_model)
+
+    # Record server boot timestamp for frontend restart detection
+    import time
+    app.state.boot_time = time.time()
+
+    # Recover chapters stuck in GENERATING status from a previous crash
+    _recover_interrupted_chapters()
+
     yield
     logger.info("FastAPI server shutting down")
+
+
+def _recover_interrupted_chapters() -> None:
+    """Reset chapters stuck in 'generating' to 'interrupted' on startup."""
+    from src.api.deps import get_orchestrator
+    from src.models.textbook import Textbook, ChapterStatus
+
+    try:
+        orch = get_orchestrator()
+        registry = orch.list_courses()
+        for entry in registry:
+            course_id = entry.get("id")
+            if not course_id:
+                continue
+            textbook = orch.store.load_course_model(course_id, "textbook.json", Textbook)
+            if not textbook:
+                continue
+            changed = False
+            for ch in textbook.chapters:
+                if ch.status == ChapterStatus.GENERATING:
+                    logger.warning(
+                        "Recovering chapter '%s' in course '%s': generating → interrupted",
+                        ch.id, course_id,
+                    )
+                    ch.status = ChapterStatus.INTERRUPTED
+                    changed = True
+            if changed:
+                from datetime import datetime
+                textbook.updated_at = datetime.now()
+                orch.store.save_course_model(course_id, "textbook.json", textbook)
+    except Exception:
+        logger.error("Failed to recover interrupted chapters", exc_info=True)
 
 
 app = FastAPI(
@@ -52,6 +92,12 @@ app.include_router(quiz.router, prefix="/api", tags=["quiz"])
 app.include_router(review.router, prefix="/api", tags=["review"])
 app.include_router(progress.router, prefix="/api", tags=["progress"])
 app.include_router(export.router, prefix="/api", tags=["export"])
+
+
+@app.get("/api/boot-time")
+def get_boot_time():
+    """Return server boot timestamp for frontend restart detection."""
+    return {"boot_time": getattr(app.state, "boot_time", 0)}
 
 
 @app.get("/api/status")
