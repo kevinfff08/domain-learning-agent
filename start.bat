@@ -55,7 +55,7 @@ if "%LLM_MODE%"=="setup-token" (
 REM --- Start backend ---
 echo.
 echo [2/3] Starting FastAPI backend on localhost:8000 ...
-start "NewLearner-Backend" cmd /c "call conda activate research_tools && uvicorn src.api.app:app --reload --reload-exclude data --reload-exclude output --reload-exclude logs --host 127.0.0.1 --port 8000 2>&1"
+start "NewLearner-Backend" cmd /c "call conda activate research_tools && python -m src.api.app 2>&1"
 timeout /t 3 /nobreak >nul
 echo [OK] Backend started.
 

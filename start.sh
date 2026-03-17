@@ -72,7 +72,7 @@ fi
 # --- Start backend ---
 echo ""
 echo "[2/3] Starting FastAPI backend on localhost:8000 ..."
-uvicorn src.api.app:app --reload --reload-exclude data --reload-exclude output --reload-exclude logs --host 127.0.0.1 --port 8000 &
+python -m src.api.app &
 PIDS+=($!)
 sleep 2
 echo -e "${GREEN}[OK]${NC} Backend started (PID: ${PIDS[-1]})"

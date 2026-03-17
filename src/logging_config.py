@@ -17,6 +17,17 @@ _LOG_DIR = _PROJECT_ROOT / "logs"
 
 _INITIALIZED = False
 
+# Endpoints to suppress from uvicorn access log (polling / health-check)
+_SUPPRESSED_ENDPOINTS = ("/api/boot-time",)
+
+
+class _PollingEndpointFilter(logging.Filter):
+    """Suppress access-log entries for high-frequency polling endpoints."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not any(ep in msg for ep in _SUPPRESSED_ENDPOINTS)
+
 
 def setup_logging(level: int = logging.INFO) -> None:
     """Configure project-wide logging.
@@ -59,6 +70,9 @@ def setup_logging(level: int = logging.INFO) -> None:
     for uvicorn_name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
         uv_logger = logging.getLogger(uvicorn_name)
         uv_logger.addHandler(file_handler)
+
+    # Filter out noisy polling endpoints from uvicorn access log
+    logging.getLogger("uvicorn.access").addFilter(_PollingEndpointFilter())
 
     root_logger.info("=" * 72)
     root_logger.info("NewLearner logging started — log file: %s", log_file)

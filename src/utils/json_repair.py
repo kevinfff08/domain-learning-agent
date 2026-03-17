@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+
+logger = logging.getLogger("newlearner.utils.json_repair")
 
 
 def repair_json(raw: str) -> dict:
@@ -73,6 +76,10 @@ def repair_json(raw: str) -> dict:
             except json.JSONDecodeError:
                 continue
 
+    logger.error(
+        "JSON repair failed. raw_len=%d, stripped_len=%d, first_200_stripped=%s",
+        len(raw), len(text), repr(text[:200]),
+    )
     raise ValueError(f"Failed to parse LLM JSON after all repair attempts. First 500 chars: {raw[:500]}")
 
 
@@ -145,8 +152,8 @@ def repair_json_array(raw: str) -> list:
 def _strip_fences(raw: str) -> str:
     """Strip markdown code fences and whitespace."""
     text = raw.strip()
-    # Remove opening fence (```json, ```JSON, ``` json, etc.)
-    text = re.sub(r"^`{3,}\s*(?:json|JSON)?\s*\n?", "", text)
+    # Remove opening fence (```json, ```JSON, ```Json, ``` json, etc.)
+    text = re.sub(r"^`{3,}\s*(?:json)?\s*\n?", "", text, flags=re.IGNORECASE)
     # Remove closing fence (may not exist if output was truncated)
     text = re.sub(r"\n?\s*`{3,}\s*$", "", text)
     return text.strip()
