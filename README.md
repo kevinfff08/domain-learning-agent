@@ -21,7 +21,7 @@ PhD 级 AI 研究领域自学系统。输入一个研究领域，系统自动搜
 |---|---|
 | 后端 | Python 3.14, FastAPI, Pydantic v2, SSE |
 | 前端 | React, TypeScript, Vite, Tailwind CSS |
-| LLM | Anthropic Claude API |
+| LLM | Anthropic Claude API / OpenAI API |
 | 资料搜索 | Tavily (主, 网络搜索), OpenAlex + arXiv (学术论文 fallback) |
 | 间隔重复 | FSRS-6 算法 |
 
@@ -56,9 +56,21 @@ GITHUB_TOKEN=...                     # 可选
 
 **Mode A: API Key（默认）**
 
+Anthropic official API:
+
 ```env
+LLM_PROVIDER=anthropic
 LLM_MODE=api-key
 ANTHROPIC_API_KEY=sk-ant-api03-...
+```
+
+OpenAI official API:
+
+```env
+LLM_PROVIDER=openai
+LLM_MODE=api-key
+OPENAI_API_KEY=sk-proj-...
+LLM_MODEL=gpt-4.1
 ```
 
 **Mode B: Setup Token（Claude 订阅用户）**
@@ -66,6 +78,7 @@ ANTHROPIC_API_KEY=sk-ant-api03-...
 通过 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 代理请求：
 
 ```env
+LLM_PROVIDER=anthropic   # or openai
 LLM_MODE=setup-token
 LLM_PROXY_URL=http://localhost:8317
 ```

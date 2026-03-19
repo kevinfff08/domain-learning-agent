@@ -80,7 +80,7 @@ class LearningOrchestrator:
         )
         # Use a separate LLM client for verification if a different model is configured
         if verification_model and verification_model != llm_model:
-            verification_llm = LLMClient(api_key=api_key, model=verification_model)
+            verification_llm = LLMClient(model=verification_model)
             logger.info("Verification using separate model: %s", verification_model)
         else:
             verification_llm = self.llm

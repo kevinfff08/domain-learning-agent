@@ -312,7 +312,7 @@ class LLMClient:
         data = repair_json(accumulated)
         return model_class.model_validate(data)
 
-    def generate_with_template(
+def generate_with_template(
         self,
         template_name: str,
         variables: dict,
@@ -327,3 +327,13 @@ class LLMClient:
         template = template_path.read_text(encoding="utf-8")
         prompt = template.format(**variables)
         return self.generate(prompt, system=system, temperature=temperature)
+
+
+from src.llm.provider_client import (
+    LLMClient,
+    is_llm_ready,
+    resolve_llm_api_key,
+    resolve_llm_base_url,
+    resolve_llm_mode,
+    resolve_llm_provider,
+)

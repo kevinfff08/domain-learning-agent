@@ -12,6 +12,7 @@ load_dotenv()
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.llm.client import is_llm_ready, resolve_llm_provider
 from src.logging_config import setup_logging, get_logger
 
 setup_logging()
@@ -25,7 +26,13 @@ async def lifespan(app: FastAPI):
     """Application startup/shutdown."""
     llm_mode = os.environ.get("LLM_MODE", "api-key")
     llm_model = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
-    logger.info("FastAPI server starting — LLM_MODE=%s, LLM_MODEL=%s", llm_mode, llm_model)
+    llm_provider = resolve_llm_provider(model=llm_model)
+    logger.info(
+        "FastAPI server starting - LLM_PROVIDER=%s, LLM_MODE=%s, LLM_MODEL=%s",
+        llm_provider,
+        llm_mode,
+        llm_model,
+    )
 
     # Record server boot timestamp for frontend restart detection
     import time
@@ -73,7 +80,7 @@ def _recover_interrupted_chapters() -> None:
 app = FastAPI(
     title="NewLearner API",
     description="PhD-level AI research domain learning system",
-    version="0.1.0",
+    version="0.2.1",
     lifespan=lifespan,
 )
 
@@ -110,13 +117,14 @@ def get_status():
     courses_list = orch.list_courses()
 
     llm_mode = os.environ.get("LLM_MODE", "api-key").strip().lower()
-    llm_ready = (
-        llm_mode == "setup-token"
-        or bool(os.environ.get("ANTHROPIC_API_KEY"))
-    )
+    llm_model = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
+    llm_provider = resolve_llm_provider(model=llm_model)
+    llm_ready = is_llm_ready(provider=llm_provider, model=llm_model, mode=llm_mode)
 
     return {
+        "llm_provider": llm_provider,
         "llm_mode": llm_mode,
+        "llm_model": llm_model,
         "llm_ready": llm_ready,
         "semantic_scholar_api_key": bool(os.environ.get("SEMANTIC_SCHOLAR_API_KEY")),
         "github_token": bool(os.environ.get("GITHUB_TOKEN")),

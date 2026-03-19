@@ -62,6 +62,9 @@ CLAUDE.md
 # Trae
 .trae/
 
+# OpenAI
+AGENTS.md
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

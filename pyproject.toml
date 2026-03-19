@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "domain-learning-agent"
-version = "0.2.0"
+version = "0.2.1"
 description = "PhD-level AI research domain learning system with textbook-based course architecture"
 readme = "README.md"
 requires-python = ">=3.14"
@@ -23,6 +23,7 @@ dependencies = [
     "nbformat>=5.10",
     "matplotlib>=3.9",
     "anthropic>=0.42",
+    "openai>=1.0",
     "pyyaml>=6.0",
     "aiohttp>=3.11",
     "fastapi>=0.115",

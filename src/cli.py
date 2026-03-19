@@ -12,6 +12,7 @@ import typer
 load_dotenv()
 
 from src.logging_config import setup_logging, get_logger
+from src.llm.client import resolve_llm_api_key
 
 setup_logging()
 logger = get_logger("cli")
@@ -32,11 +33,13 @@ def _get_orchestrator(**kwargs):
     """Create orchestrator with environment config."""
     from src.orchestrator import LearningOrchestrator
 
+    llm_model = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
     return LearningOrchestrator(
         data_dir=kwargs.get("data_dir", "data"),
-        api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        api_key=resolve_llm_api_key(model=llm_model),
         s2_api_key=os.environ.get("SEMANTIC_SCHOLAR_API_KEY"),
         github_token=os.environ.get("GITHUB_TOKEN"),
+        llm_model=llm_model,
     )
 
 
@@ -168,7 +171,9 @@ def status():
     table.add_column("Component", style="cyan")
     table.add_column("Status", style="green")
 
-    table.add_row("ANTHROPIC_API_KEY", "Set" if os.environ.get("ANTHROPIC_API_KEY") else "[red]Not set[/red]")
+    table.add_row("LLM_PROVIDER", os.environ.get("LLM_PROVIDER", "auto"))
+    table.add_row("ANTHROPIC_API_KEY", "Set" if os.environ.get("ANTHROPIC_API_KEY") else "Not set")
+    table.add_row("OPENAI_API_KEY", "Set" if os.environ.get("OPENAI_API_KEY") else "Not set")
     table.add_row("SEMANTIC_SCHOLAR_API_KEY", "Set" if os.environ.get("SEMANTIC_SCHOLAR_API_KEY") else "Not set (optional)")
     table.add_row("GITHUB_TOKEN", "Set" if os.environ.get("GITHUB_TOKEN") else "Not set (optional)")
     table.add_row("Data directory", str(Path("data").resolve()))
