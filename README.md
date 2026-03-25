@@ -13,7 +13,7 @@ PhD 级 AI 研究领域自学系统。输入一个研究领域，系统自动搜
 - **服务状态监控** — 前端自动检测后端重启并通知用户
 - **自适应学习** — 根据测验表现动态调整内容难度和解释方式
 - **间隔重复 (FSRS)** — 基于 FSRS-6 算法的闪卡复习系统
-- **多格式导出** — Obsidian 笔记库、Anki 卡组、PDF
+- **多格式导出** — Obsidian 笔记库、Anki 卡组、HTML、PDF
 
 ## 技术栈
 
@@ -139,7 +139,7 @@ npm run dev
 - 章节测验与即时反馈
 - 闪卡复习（3D 翻转动画 + FSRS 调度）
 - 学习进度仪表盘
-- 多格式导出（Obsidian、Anki、PDF）
+- 多格式导出（Obsidian、Anki、HTML、PDF）
 
 ## CLI 命令
 
@@ -164,7 +164,7 @@ newlearner progress diffusion_models
 newlearner review
 
 # 导出材料
-newlearner export diffusion_models --formats obsidian,anki
+newlearner export diffusion_models --formats obsidian,anki,html,pdf
 
 # 系统状态
 newlearner status
@@ -197,7 +197,7 @@ Pre-Assessor  Textbook      5-step         Quiz Engine
 | | Spaced Repetition | FSRS-6 闪卡复习调度 |
 | | Practice Generator | 练习题与编程挑战 |
 | 4 输出与追踪 | Progress Tracker | 学习进度追踪与报告 |
-| | Material Integrator | Obsidian/Anki/PDF 导出 |
+| | Material Integrator | Obsidian/Anki/HTML/PDF 导出 |
 
 ### 章节内容生成管道（5 步）
 

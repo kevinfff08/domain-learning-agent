@@ -9,6 +9,7 @@ import type {
   QuizResult,
   FlashCard,
   LearnerProgress,
+  ExportResponse,
   SSEEvent,
 } from '../types'
 
@@ -21,7 +22,12 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
   if (!res.ok) {
     const body = await res.text()
-    throw new Error(`API error ${res.status}: ${body}`)
+    let detail: string | null = null
+    try {
+      const parsed = JSON.parse(body) as { detail?: string }
+      detail = parsed.detail ?? null
+    } catch {}
+    throw new Error(detail ?? `API error ${res.status}: ${body}`)
   }
   return res.json()
 }
@@ -221,8 +227,8 @@ export async function fetchProgress(courseId: string): Promise<LearnerProgress> 
 export async function exportMaterials(
   courseId: string,
   formats: string[],
-): Promise<Record<string, string>> {
-  return request<Record<string, string>>(
+): Promise<ExportResponse> {
+  return request<ExportResponse>(
     `/courses/${encodeURIComponent(courseId)}/export`,
     { method: 'POST', body: JSON.stringify({ formats }) },
   )

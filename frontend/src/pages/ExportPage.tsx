@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useCourse } from '../contexts/CourseContext'
 import { exportMaterials } from '../api/client'
+import type { ExportResponse } from '../types'
 
 const formatOptions = [
   {
@@ -29,7 +30,7 @@ export default function ExportPage() {
   const { courseId, course } = useCourse()
   const [selectedFormats, setSelectedFormats] = useState<Set<string>>(new Set())
   const [exporting, setExporting] = useState(false)
-  const [results, setResults] = useState<Record<string, string> | null>(null)
+  const [results, setResults] = useState<ExportResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   const toggleFormat = (id: string) => {
@@ -56,6 +57,9 @@ export default function ExportPage() {
       setExporting(false)
     }
   }
+
+  const hasItems = results ? Object.keys(results.items).length > 0 : false
+  const hasErrors = results ? Object.keys(results.errors).length > 0 : false
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -106,13 +110,13 @@ export default function ExportPage() {
         </div>
       )}
 
-      {results && (
+      {hasItems && results && (
         <div className="mt-6 bg-green-50 border border-green-200 rounded-lg p-5">
           <h3 className="text-sm font-semibold text-green-700 mb-3">
             导出完成
           </h3>
           <div className="space-y-2">
-            {Object.entries(results).map(([format, path]) => (
+            {Object.entries(results.items).map(([format, path]) => (
               <div
                 key={format}
                 className="flex items-center justify-between bg-white rounded-lg p-3 border border-green-100"
@@ -125,6 +129,27 @@ export default function ExportPage() {
                 <span className="text-xs text-slate-500 font-mono truncate max-w-xs">
                   {path}
                 </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {hasErrors && results && (
+        <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-5">
+          <h3 className="text-sm font-semibold text-amber-700 mb-3">
+            部分格式未导出
+          </h3>
+          <div className="space-y-2">
+            {Object.entries(results.errors).map(([format, message]) => (
+              <div
+                key={format}
+                className="bg-white rounded-lg p-3 border border-amber-100"
+              >
+                <div className="text-sm font-medium text-slate-700">
+                  {format.toUpperCase()}
+                </div>
+                <div className="text-xs text-slate-500 mt-1">{message}</div>
               </div>
             ))}
           </div>

@@ -54,6 +54,7 @@ logs/
 
 # Cache
 .cache/
+.tmp/
 
 # Claude
 .claude/

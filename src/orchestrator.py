@@ -509,7 +509,7 @@ class LearningOrchestrator:
         self,
         course_id: str,
         formats: list[str] | None = None,
-    ) -> dict[str, Path]:
+    ) -> dict[str, dict[str, Path] | dict[str, str]]:
         """Export learning materials in specified formats."""
         formats = formats or ["obsidian"]
         textbook = self.store.load_course_model(course_id, "textbook.json", Textbook)
@@ -517,22 +517,39 @@ class LearningOrchestrator:
             raise ValueError(f"No textbook for course '{course_id}'")
 
         progress = self.tracker.get_or_create_progress(textbook.field)
-        results = {}
+        items: dict[str, Path] = {}
+        errors: dict[str, str] = {}
+        supported_formats = {"obsidian", "anki", "html", "pdf"}
 
-        if "obsidian" in formats:
-            path = self.integrator.export_obsidian(textbook, progress)
-            results["obsidian"] = path
+        for export_format in formats:
+            if export_format not in supported_formats:
+                errors[export_format] = f"Unsupported export format: {export_format}"
+                continue
 
-        if "anki" in formats:
-            path = self.spaced_rep.export_anki(textbook.field)
-            results["anki"] = path
+            try:
+                if export_format == "obsidian":
+                    items["obsidian"] = self.integrator.export_obsidian(textbook, progress).resolve()
+                elif export_format == "anki":
+                    items["anki"] = self.spaced_rep.export_anki(textbook.field).resolve()
+                elif export_format == "html":
+                    items["html"] = self.integrator.export_html(textbook).resolve()
+                elif export_format == "pdf":
+                    items["pdf"] = self.integrator.export_pdf(textbook).resolve()
+            except Exception as exc:
+                logger.error(
+                    "Export failed for course=%s format=%s: %s",
+                    course_id,
+                    export_format,
+                    exc,
+                    exc_info=True,
+                )
+                errors[export_format] = str(exc)
 
-        if "pdf" in formats:
-            path = self.integrator.export_pdf(textbook)
-            if path:
-                results["pdf"] = path
+        if not items:
+            detail = "; ".join(f"{fmt}: {msg}" for fmt, msg in errors.items()) or "No export files were generated."
+            raise ValueError(detail)
 
-        return results
+        return {"items": items, "errors": errors}
 
     # ── Review & Progress ────────────────────────────────────────────
 

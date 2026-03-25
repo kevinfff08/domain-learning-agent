@@ -264,6 +264,11 @@ export interface ResourceCollection {
   curated_at?: string
 }
 
+export interface ExportResponse {
+  items: Record<string, string>
+  errors: Record<string, string>
+}
+
 // SSE Events
 export interface SSEEvent {
   event: string

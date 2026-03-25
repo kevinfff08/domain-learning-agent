@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from src.api.deps import get_orchestrator
@@ -382,7 +382,13 @@ def get_progress(
 
 class ExportRequest(BaseModel):
     """Export body."""
-    formats: list[str] = ["obsidian"]
+    formats: list[str] = Field(default_factory=lambda: ["obsidian"])
+
+
+class ExportResponse(BaseModel):
+    """Export response payload."""
+    items: dict[str, str]
+    errors: dict[str, str] = Field(default_factory=dict)
 
 
 @router.post("/courses/{course_id}/export")
@@ -392,8 +398,20 @@ async def export_materials(
     orch: LearningOrchestrator = Depends(get_orchestrator),
 ):
     """Export learning materials in specified formats."""
-    results = await orch.export_materials(course_id, req.formats)
-    return {fmt: str(path) for fmt, path in results.items()}
+    try:
+        results = await orch.export_materials(course_id, req.formats)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    items = {
+        fmt: str(path)
+        for fmt, path in results["items"].items()
+    }
+    errors = {
+        fmt: message
+        for fmt, message in results["errors"].items()
+    }
+    return ExportResponse(items=items, errors=errors)
 
 
 # ── Socratic dialogue ────────────────────────────────────────────────

@@ -139,14 +139,16 @@ def progress(
 @app.command()
 def export(
     course_id: str = typer.Argument(help="Course ID"),
-    formats: str = typer.Option("obsidian", help="Comma-separated: obsidian,anki,pdf"),
+    formats: str = typer.Option("obsidian", help="Comma-separated: obsidian,anki,html,pdf"),
 ):
     """Export learning materials."""
     orch = _get_orchestrator()
     fmt_list = [f.strip() for f in formats.split(",")]
     results = asyncio.run(orch.export_materials(course_id, fmt_list))
-    for fmt, path in results.items():
+    for fmt, path in results["items"].items():
         console.print(f"[green]{fmt}: {path}[/green]")
+    for fmt, message in results["errors"].items():
+        console.print(f"[yellow]{fmt}: {message}[/yellow]")
 
 
 @app.command()
