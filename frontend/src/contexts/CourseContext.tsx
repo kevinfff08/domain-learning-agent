@@ -1,4 +1,12 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from 'react'
 import { useParams } from 'react-router-dom'
 import type { Textbook, CourseEntry } from '../types'
 import { fetchTextbook, fetchCourse } from '../api/client'
@@ -10,6 +18,7 @@ interface CourseContextType {
   loading: boolean
   refreshTextbook: () => Promise<void>
   refreshCourse: () => Promise<void>
+  setTextbook: Dispatch<SetStateAction<Textbook | null>>
 }
 
 const CourseContext = createContext<CourseContextType | null>(null)
@@ -41,7 +50,7 @@ export function CourseProvider({ children }: { children: ReactNode }) {
   }, [courseId])
 
   return (
-    <CourseContext.Provider value={{ courseId: courseId || '', course, textbook, loading, refreshTextbook, refreshCourse }}>
+    <CourseContext.Provider value={{ courseId: courseId || '', course, textbook, loading, refreshTextbook, refreshCourse, setTextbook }}>
       {children}
     </CourseContext.Provider>
   )

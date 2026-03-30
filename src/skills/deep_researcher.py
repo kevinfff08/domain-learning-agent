@@ -83,6 +83,8 @@ _MECHANISM_PROMPT = """Write the **Mechanism & Theory** layer for: "{concept_nam
 ## Context
 - Field: {field}
 - Chapter description: {description}
+- Course-level requirements: {course_requirements}
+- Chapter-specific guidance: {chapter_guidance}
 - Key papers in this textbook:
 {key_papers}
 - Retrieved paper abstracts:
@@ -143,6 +145,7 @@ _MECHANISM_PROMPT = """Write the **Mechanism & Theory** layer for: "{concept_nam
 - **Rigor**: State assumptions clearly. If an approximation is made, say so and explain why it's valid.
 - **Depth**: Include at least 5-8 key equations with full derivations. Include 1-2 algorithms.
 - **Attribution**: Every major equation and claim must cite its source paper.
+- **Guidance alignment**: Let `chapter_guidance` determine the emphasis and scope for this chapter. Use `course_requirements` only as background context.
 """
 
 _INTUITION_PROMPT = """Write the **Intuition & Understanding** layer for: "{concept_name}"
@@ -150,6 +153,8 @@ _INTUITION_PROMPT = """Write the **Intuition & Understanding** layer for: "{conc
 ## Context
 - Field: {field}
 - Chapter description: {description}
+- Course-level requirements: {course_requirements}
+- Chapter-specific guidance: {chapter_guidance}
 - Student learning goal: {learning_goal}
 - Student learning style: {learning_style}
 - Key papers: {key_papers}
@@ -172,6 +177,7 @@ The theoretical treatment covers: {mechanism_summary}
 - **Depth over breadth**: Go deep into one great analogy rather than listing several shallow ones.
 - **Precision**: The analogy must be technically accurate — don't sacrifice correctness for accessibility.
 - **Non-triviality**: The key_insight should be something a reader wouldn't get from just reading the abstract.
+- **Guidance alignment**: Use `chapter_guidance` to choose the intuition, historical framing, and examples for this chapter.
 """
 
 _PRACTICE_PROMPT = """Write the **Practice & Implementation** layer for: "{concept_name}"
@@ -179,6 +185,8 @@ _PRACTICE_PROMPT = """Write the **Practice & Implementation** layer for: "{conce
 ## Context
 - Field: {field}
 - Chapter description: {description}
+- Course-level requirements: {course_requirements}
+- Chapter-specific guidance: {chapter_guidance}
 - Student learning goal: {learning_goal}
 - Retrieved paper abstracts:
 {paper_context}
@@ -231,6 +239,7 @@ The theoretical treatment covers: {mechanism_summary}
 - **At least 1 code analysis block** with 50+ lines.
 - **At least 5 hyperparameters** with reasoning (not just values).
 - **At least 5 common pitfalls** with detailed explanations.
+- **Guidance alignment**: Let `chapter_guidance` steer the practice focus, examples, and implementation tradeoffs for this chapter.
 """
 
 
@@ -299,6 +308,8 @@ class DeepResearcher:
         return {
             "concept_name": chapter.title,
             "description": chapter.description,
+            "chapter_guidance": chapter.chapter_guidance or "No chapter-specific guidance provided.",
+            "course_requirements": textbook.course_requirements or profile.course_requirements or "No course-level requirements provided.",
             "field": textbook.field,
             "key_papers": key_papers_text,
             "paper_context": paper_context,

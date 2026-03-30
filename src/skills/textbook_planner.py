@@ -182,7 +182,7 @@ class TextbookPlanner:
                 on_progress(step, msg)
 
         # --- Step 1: Search all sources in parallel ---
-        _emit("search", f"正在搜索 '{field}' 相关资料（论文、教程、博客）…")
+        _emit("search", f"Searching references for '{field}'...")
 
         web_results, surveys, key_papers = await asyncio.gather(
             self._search_web(field),
@@ -191,12 +191,15 @@ class TextbookPlanner:
         )
 
         total = len(web_results) + len(surveys) + len(key_papers)
-        _emit("search_done", f"找到 {total} 条参考资料（网络 {len(web_results)}, 综述 {len(surveys)}, 论文 {len(key_papers)}）")
+        _emit(
+            "search_done",
+            f"Found {total} references (web={len(web_results)}, surveys={len(surveys)}, papers={len(key_papers)}).",
+        )
 
         references = self._format_references(surveys, key_papers, web_results)
 
         # --- Step 2: LLM generate outline ---
-        _emit("generate_outline", "正在生成教材大纲…")
+        _emit("generate_outline", "Generating textbook outline...")
 
         math_level = round(sum([
             profile.math_foundations.linear_algebra.level,
@@ -208,40 +211,55 @@ class TextbookPlanner:
             profile.programming.python.level,
             profile.programming.pytorch.level,
         ]) / 2)
+        course_requirements = profile.course_requirements.strip()
+        requirements_block = (
+            f"Additional course-level requirements from the learner:\n{course_requirements}\n"
+            if course_requirements
+            else "Additional course-level requirements from the learner:\nNone.\n"
+        )
 
-        prompt = f"""你是一位 {field} 领域的教材编写专家。基于以下领域参考资料（包含论文、教程、博客等），
-为一位数学水平 {math_level}/5、编程水平 {prog_level}/5 的学生设计一本系统的学习教材大纲。
+        prompt = f"""You are designing a PhD-level textbook outline for the field "{field}".
 
-学习目标: {profile.learning_goal.value}
+The student profile:
+- Math level: {math_level}/5
+- Programming level: {prog_level}/5
+- Learning goal: {profile.learning_goal.value}
+- Preferred learning style: {profile.learning_style.value}
 
-领域参考资料（论文、教程、博客）:
+{requirements_block}
+
+Reference material:
 {references}
 
-要求:
-- 从基础到前沿，循序渐进
-- 每章有明确的标题、描述和关键概念列表
-- 包含理论分析、实验方法、代码实践相关章节
-- 总共 15-30 章
-- 难度 1-5 (1=入门, 5=前沿研究)
-- 预估每章学习时间(小时)
+Your task:
+- Design a complete outline that progresses from foundations to advanced topics.
+- Produce 15-30 chapters.
+- Each chapter must include a clear title, description, key topics, tags, difficulty, and estimated study hours.
+- Each chapter must also include a `chapter_guidance` field.
+- `chapter_guidance` must explain this chapter's role in the overall course and concretize the course-level requirements for this specific chapter.
+- `chapter_guidance` must adapt the global course requirements into chapter-specific emphasis, omissions, examples, case studies, or practice direction.
+- `chapter_guidance` must not simply repeat the full course-level requirements verbatim.
+- The outline should balance theory, mechanism, experiments, and implementation in a way that matches the learner profile.
 
-返回 JSON 数组，每个元素格式:
+Return a JSON array. Each item must have this structure:
 {{
   "chapter_number": 1,
-  "title": "章节标题",
-  "description": "章节描述和学习目标",
+  "title": "Chapter title",
+  "description": "What this chapter covers and why it matters",
+  "chapter_guidance": "How this chapter should realize the course-level requirements within its own scope",
   "difficulty": 3,
   "estimated_hours": 2.0,
-  "key_topics": ["关键概念1", "关键概念2"],
-  "tags": ["标签1"]
-}}"""
+  "key_topics": ["topic 1", "topic 2"],
+  "tags": ["tag1", "tag2"]
+}}
+"""
 
         response = self.llm.generate(prompt, system=SYSTEM_PROMPT, max_tokens=8192)
         chapters_data = repair_json_array(response)
-        _emit("generate_outline_done", f"生成了 {len(chapters_data)} 个章节")
+        _emit("generate_outline_done", f"Generated {len(chapters_data)} chapters.")
 
         # --- Step 3: Build Textbook ---
-        _emit("build_textbook", "正在构建教材结构…")
+        _emit("build_textbook", "Building textbook structure...")
         chapters: list[Chapter] = []
         for i, ch_data in enumerate(chapters_data, 1):
             ch_num = ch_data.get("chapter_number", i)
@@ -251,6 +269,7 @@ class TextbookPlanner:
                 chapter_number=ch_num,
                 title=ch_data.get("title", f"Chapter {i}"),
                 description=ch_data.get("description", ""),
+                chapter_guidance=ch_data.get("chapter_guidance", ""),
                 difficulty=ch_data.get("difficulty", 3),
                 estimated_hours=ch_data.get("estimated_hours", 2.0),
                 key_topics=ch_data.get("key_topics", []),
@@ -262,6 +281,7 @@ class TextbookPlanner:
         textbook = Textbook(
             course_id=course_id,
             field=field,
+            course_requirements=profile.course_requirements,
             title=f"{field}：从理论到实践",
             chapters=chapters,
             survey_papers=paper_refs,
@@ -271,7 +291,10 @@ class TextbookPlanner:
         )
 
         self.store.save_course_model(course_id, "textbook.json", textbook)
-        _emit("build_textbook_done", f"教材构建完成：{len(chapters)} 章，预计 {textbook.total_estimated_hours:.0f} 小时")
+        _emit(
+            "build_textbook_done",
+            f"Textbook ready with {len(chapters)} chapters and {textbook.total_estimated_hours:.0f} estimated hours.",
+        )
         return textbook
 
     @staticmethod

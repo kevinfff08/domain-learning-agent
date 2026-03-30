@@ -120,8 +120,22 @@ export async function fetchCourse(courseId: string): Promise<CourseEntry> {
   return request<CourseEntry>(`/courses/${encodeURIComponent(courseId)}`)
 }
 
+export async function fetchCourseSettings(courseId: string): Promise<AssessmentRequest> {
+  return request<AssessmentRequest>(`/courses/${encodeURIComponent(courseId)}/settings`)
+}
+
 export async function deleteCourse(courseId: string): Promise<void> {
   await request(`/courses/${encodeURIComponent(courseId)}`, { method: 'DELETE' })
+}
+
+export async function updateCourse(
+  courseId: string,
+  data: AssessmentRequest,
+): Promise<{ course: CourseEntry; profile: AssessmentProfile }> {
+  return request(`/courses/${encodeURIComponent(courseId)}`, {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
 }
 
 // ---- Textbook ----
@@ -172,6 +186,20 @@ export async function deleteChapterContent(
   await request(`/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}`, {
     method: 'DELETE',
   })
+}
+
+export async function updateChapterGuidance(
+  courseId: string,
+  chapterId: string,
+  chapterGuidance: string,
+): Promise<Textbook> {
+  return request<Textbook>(
+    `/courses/${encodeURIComponent(courseId)}/chapters/${encodeURIComponent(chapterId)}/guidance`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ chapter_guidance: chapterGuidance }),
+    },
+  )
 }
 
 export function streamChapter(

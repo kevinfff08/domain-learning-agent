@@ -17,6 +17,7 @@ export interface Chapter {
   chapter_number: number
   title: string
   description: string
+  chapter_guidance: string
   difficulty: number
   estimated_hours: number
   status: 'pending' | 'generating' | 'interrupted' | 'ready' | 'in_progress' | 'completed'
@@ -31,6 +32,7 @@ export interface Textbook {
   course_id: string
   field: string
   title: string
+  course_requirements: string
   chapters: Chapter[]
   survey_papers: PaperReference[]
   total_estimated_hours: number
@@ -52,6 +54,7 @@ export interface PaperReference {
 // Assessment - request shape (what we POST)
 export interface AssessmentRequest {
   field: string
+  course_requirements: string
   math_level: number
   programming_level: number
   domain_level: number
@@ -63,6 +66,7 @@ export interface AssessmentRequest {
 // Assessment - response shape (what the API returns)
 export interface AssessmentProfile {
   target_field: string
+  course_requirements?: string
   learning_goal: string
   available_hours_per_week: number
   learning_style: string

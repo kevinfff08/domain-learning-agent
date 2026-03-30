@@ -76,6 +76,10 @@ class AssessmentProfile(BaseModel):
 
     user_id: str = "default"
     target_field: str = Field(description="The domain to learn, e.g., 'Diffusion Models'")
+    course_requirements: str = Field(
+        default="",
+        description="Course-level user requirements that should shape outline and chapter emphasis",
+    )
     math_foundations: MathFoundations = Field(default_factory=MathFoundations)
     programming: ProgrammingSkills = Field(default_factory=ProgrammingSkills)
     domain_knowledge: dict[str, int] = Field(

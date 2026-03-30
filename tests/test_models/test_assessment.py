@@ -44,6 +44,7 @@ class TestAssessmentProfile:
     def test_basic_creation(self):
         profile = AssessmentProfile(target_field="Diffusion Models")
         assert profile.target_field == "Diffusion Models"
+        assert profile.course_requirements == ""
         assert profile.learning_goal == LearningGoal.UNDERSTAND
         assert profile.available_hours_per_week == 10.0
 

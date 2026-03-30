@@ -166,6 +166,16 @@ export default function ChapterPage() {
               {chapter.description}
             </p>
           )}
+          {chapter?.chapter_guidance && (
+            <div className="mb-6 mx-auto max-w-2xl rounded-lg border border-blue-100 bg-blue-50/70 p-4 text-left">
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Chapter Guidance
+              </h3>
+              <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                {chapter.chapter_guidance}
+              </p>
+            </div>
+          )}
 
           {streaming ? (
             <div className="text-left max-w-lg mx-auto">
@@ -225,6 +235,16 @@ export default function ChapterPage() {
           </h1>
           {chapter?.description && (
             <p className="text-sm text-slate-400 mt-2">{chapter.description}</p>
+          )}
+          {chapter?.chapter_guidance && (
+            <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50/70 p-4">
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Chapter Guidance
+              </h2>
+              <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                {chapter.chapter_guidance}
+              </p>
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0 ml-4">

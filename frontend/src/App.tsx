@@ -16,6 +16,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route path="/" element={<CoursesPage />} />
         <Route path="/courses/new" element={<NewCoursePage />} />
+        <Route path="/courses/:courseId/edit" element={<NewCoursePage />} />
       </Route>
       <Route path="/courses/:courseId" element={<CourseLayout />}>
         <Route index element={<TextbookPage />} />

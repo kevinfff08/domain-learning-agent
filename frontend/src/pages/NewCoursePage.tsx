@@ -1,10 +1,14 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { createCourse } from '../api/client'
+import { useEffect, useState } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
+import { createCourse, fetchCourseSettings, updateCourse } from '../api/client'
 
 export default function NewCoursePage() {
   const navigate = useNavigate()
+  const { courseId } = useParams<{ courseId: string }>()
+  const isEditMode = Boolean(courseId)
   const [submitting, setSubmitting] = useState(false)
+  const [loadingSettings, setLoadingSettings] = useState(false)
+  const [settingsLoadFailed, setSettingsLoadFailed] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [field, setField] = useState('')
@@ -16,6 +20,36 @@ export default function NewCoursePage() {
   >('understand_concepts')
   const [availableHours, setAvailableHours] = useState(10)
   const [learningStyle, setLearningStyle] = useState('intuition_first')
+  const [courseRequirements, setCourseRequirements] = useState('')
+
+  useEffect(() => {
+    if (!courseId) return
+
+    setLoadingSettings(true)
+    setSettingsLoadFailed(false)
+    setError(null)
+
+    fetchCourseSettings(courseId)
+      .then((settings) => {
+        setField(settings.field)
+        setCourseRequirements(settings.course_requirements)
+        setMathLevel(settings.math_level)
+        setProgrammingLevel(settings.programming_level)
+        setDomainLevel(settings.domain_level)
+        setLearningGoal(settings.learning_goal)
+        setAvailableHours(settings.available_hours)
+        setLearningStyle(settings.learning_style)
+      })
+      .catch((err) => {
+        setSettingsLoadFailed(true)
+        setError(
+          err instanceof Error
+            ? `加载课程设定失败：${err.message}。请先重启后端服务，再进入“修改课程设定”。`
+            : '加载课程设定失败。请先重启后端服务，再进入“修改课程设定”。',
+        )
+      })
+      .finally(() => setLoadingSettings(false))
+  }, [courseId])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -28,28 +62,66 @@ export default function NewCoursePage() {
     setError(null)
 
     try {
-      const result = await createCourse({
+      const payload = {
         field: field.trim(),
+        course_requirements: courseRequirements.trim(),
         math_level: mathLevel,
         programming_level: programmingLevel,
         domain_level: domainLevel,
         learning_goal: learningGoal,
         available_hours: availableHours,
         learning_style: learningStyle,
+      }
+      const result = courseId
+        ? await updateCourse(courseId, payload)
+        : await createCourse(payload)
+
+      navigate(`/courses/${result.course.id}`, {
+        state: courseId ? { autoBuildOutline: true } : undefined,
       })
-      navigate(`/courses/${result.course.id}`)
     } catch (err) {
-      setError(err instanceof Error ? err.message : '创建失败')
+      if (courseId) {
+        setError(
+          err instanceof Error
+            ? `保存失败：${err.message}。如果这是刚加的功能，请先重启后端服务。`
+            : '保存失败。请先重启后端服务后重试。',
+        )
+      } else {
+        setError(err instanceof Error ? err.message : '创建失败')
+      }
     } finally {
       setSubmitting(false)
     }
   }
 
+  if (loadingSettings) {
+    return (
+      <div className="flex items-center justify-center h-64 text-slate-400">
+        加载课程设定中...
+      </div>
+    )
+  }
+
+  if (isEditMode && settingsLoadFailed) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-2xl font-bold text-slate-800 mb-2">修改课程设定</h1>
+        <div className="mt-8 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          {error ?? '加载课程设定失败。请先重启后端服务，再进入“修改课程设定”。'}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="max-w-2xl mx-auto">
-      <h1 className="text-2xl font-bold text-slate-800 mb-2">创建新课程</h1>
+      <h1 className="text-2xl font-bold text-slate-800 mb-2">
+        {isEditMode ? '修改课程设定' : '创建新课程'}
+      </h1>
       <p className="text-sm text-slate-400 mb-8">
-        填写你的背景和学习目标，系统将为你生成定制化的学习教材
+        {isEditMode
+          ? '修改课程要求和学习设定后，系统会清空旧大纲及其衍生内容，并重新生成教材大纲'
+          : '填写你的背景和学习目标，系统将为你生成定制化的学习教材'}
       </p>
 
       {error && (
@@ -71,6 +143,22 @@ export default function NewCoursePage() {
             placeholder="例如: 图神经网络、强化学习、扩散模型"
             className="w-full rounded-lg border border-slate-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">
+            课程要求（可选）
+          </label>
+          <textarea
+            value={courseRequirements}
+            onChange={(e) => setCourseRequirements(e.target.value)}
+            rows={4}
+            placeholder="例如：整门课偏重图像生成实践，减少纯数学证明，并在后半段加入工程实现与调参经验。"
+            className="w-full rounded-lg border border-slate-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            这会先影响大纲设计，再细化为每章可编辑的章节要求。
+          </p>
         </div>
 
         {/* Math Level */}
@@ -173,7 +261,9 @@ export default function NewCoursePage() {
           disabled={submitting}
           className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          {submitting ? '创建中...' : '创建课程'}
+          {submitting
+            ? (isEditMode ? '正在保存并重建大纲...' : '创建中...')
+            : (isEditMode ? '保存并重新生成大纲' : '创建课程')}
         </button>
       </form>
     </div>

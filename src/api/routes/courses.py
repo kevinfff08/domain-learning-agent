@@ -18,12 +18,17 @@ router = APIRouter()
 class CreateCourseRequest(BaseModel):
     """Create course request body."""
     field: str
+    course_requirements: str = ""
     math_level: int = 3
     programming_level: int = 3
     domain_level: int = 0
     learning_goal: str = "understand_concepts"
     available_hours: float = 10.0
     learning_style: str = "intuition_first"
+
+
+class CourseSettingsResponse(CreateCourseRequest):
+    """Editable course settings payload."""
 
 
 @router.get("/courses")
@@ -61,6 +66,41 @@ def get_course(
     if not course:
         raise HTTPException(status_code=404, detail=f"Course '{course_id}' not found.")
     return course.model_dump(mode="json")
+
+
+@router.get("/courses/{course_id}/settings")
+def get_course_settings(
+    course_id: str,
+    orch: LearningOrchestrator = Depends(get_orchestrator),
+):
+    """Get editable settings for an existing course."""
+    try:
+        settings = orch.get_course_settings(course_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return CourseSettingsResponse(**settings).model_dump()
+
+
+@router.put("/courses/{course_id}")
+def update_course(
+    course_id: str,
+    req: CreateCourseRequest,
+    orch: LearningOrchestrator = Depends(get_orchestrator),
+):
+    """Update course settings and reset derived outline/content artifacts."""
+    logger.info("PUT /courses/%s — field=%s", course_id, req.field)
+    try:
+        course, profile = orch.update_course(
+            course_id,
+            req.model_dump(),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    return {
+        "course": course.model_dump(mode="json"),
+        "profile": profile.model_dump(),
+    }
 
 
 @router.delete("/courses/{course_id}")

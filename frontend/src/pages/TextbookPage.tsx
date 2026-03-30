@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useCourse } from '../contexts/CourseContext'
-import { buildOutline, generateAllChapters, pauseBatchGeneration, streamChapter } from '../api/client'
+import { buildOutline, generateAllChapters, pauseBatchGeneration, streamChapter, updateChapterGuidance } from '../api/client'
 import type { SSEEvent, Chapter } from '../types'
 import StepProgress from '../components/StepProgress'
 
@@ -96,7 +96,9 @@ function useAutoScroll(dep: unknown) {
 }
 
 export default function TextbookPage() {
-  const { courseId, textbook, loading, refreshTextbook, refreshCourse } = useCourse()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const { courseId, textbook, loading, refreshTextbook, refreshCourse, setTextbook } = useCourse()
   const [building, setBuilding] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [pausing, setPausing] = useState(false)
@@ -104,11 +106,15 @@ export default function TextbookPage() {
   const [currentStep, setCurrentStep] = useState(0)
   const [completedSteps, setCompletedSteps] = useState<number[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [editingChapterId, setEditingChapterId] = useState<string | null>(null)
+  const [guidanceDrafts, setGuidanceDrafts] = useState<Record<string, string>>({})
+  const [savingGuidanceId, setSavingGuidanceId] = useState<string | null>(null)
   const cancelRef = useRef<(() => void) | null>(null)
   // Track chapter statuses locally during batch/single generation for real-time updates
   const [chapterOverrides, setChapterOverrides] = useState<Record<string, Chapter['status']>>({})
   // Which chapter is currently being generated (for showing inline progress)
   const [activeGeneratingChapterId, setActiveGeneratingChapterId] = useState<string | null>(null)
+  const autoBuildStartedRef = useRef(false)
 
   const logRef = useAutoScroll(messages)
 
@@ -129,6 +135,43 @@ export default function TextbookPage() {
       setCurrentStep(0)
     }
   }, [])
+
+  const startEditingGuidance = useCallback((chapter: Chapter) => {
+    setEditingChapterId(chapter.id)
+    setGuidanceDrafts((prev) => ({
+      ...prev,
+      [chapter.id]: prev[chapter.id] ?? chapter.chapter_guidance ?? '',
+    }))
+  }, [])
+
+  const cancelEditingGuidance = useCallback((chapterId: string) => {
+    setEditingChapterId((current) => (current === chapterId ? null : current))
+    setGuidanceDrafts((prev) => {
+      const next = { ...prev }
+      delete next[chapterId]
+      return next
+    })
+  }, [])
+
+  const saveGuidance = useCallback(async (chapterId: string) => {
+    const nextGuidance = (guidanceDrafts[chapterId] ?? '').trim()
+    setSavingGuidanceId(chapterId)
+    setError(null)
+    try {
+      const updated = await updateChapterGuidance(courseId, chapterId, nextGuidance)
+      setTextbook(updated)
+      setEditingChapterId((current) => (current === chapterId ? null : current))
+      setGuidanceDrafts((prev) => {
+        const next = { ...prev }
+        delete next[chapterId]
+        return next
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存章节要求失败')
+    } finally {
+      setSavingGuidanceId(null)
+    }
+  }, [courseId, guidanceDrafts, setTextbook])
 
   const handleBuildOutline = () => {
     setBuilding(true)
@@ -168,6 +211,15 @@ export default function TextbookPage() {
       },
     )
   }
+
+  useEffect(() => {
+    if (loading || textbook || building || autoBuildStartedRef.current) return
+    if ((location.state as { autoBuildOutline?: boolean } | null)?.autoBuildOutline) {
+      autoBuildStartedRef.current = true
+      handleBuildOutline()
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }, [building, handleBuildOutline, loading, location.pathname, location.state, navigate, textbook])
 
   const handleGenerateAll = () => {
     setGenerating(true)
@@ -364,8 +416,23 @@ export default function TextbookPage() {
         </p>
       </div>
 
+      {textbook.course_requirements && (
+        <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50/70 p-4">
+          <h2 className="mb-2 text-sm font-semibold text-slate-700">整门课要求</h2>
+          <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">
+            {textbook.course_requirements}
+          </p>
+        </div>
+      )}
+
       {/* Actions */}
       <div className="flex items-center gap-3 mb-6">
+        <Link
+          to={`/courses/${courseId}/edit`}
+          className="border border-slate-300 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors"
+        >
+          修改课程设定并重建大纲
+        </Link>
         {needsGeneration && !isAnyGenerating && (
           <button
             onClick={handleGenerateAll}
@@ -430,8 +497,9 @@ export default function TextbookPage() {
             return (
               <div
                 key={chapter.id}
-                className="flex items-center gap-4 px-5 py-3.5 hover:bg-blue-50/50 transition-colors group"
+                className="px-5 py-4 hover:bg-blue-50/40 transition-colors"
               >
+                <div className="flex items-start gap-4">
                 {/* Status icon */}
                 <StatusIcon status={effectiveStatus} />
 
@@ -448,6 +516,11 @@ export default function TextbookPage() {
                   <h3 className="text-sm font-medium text-slate-800 group-hover:text-blue-600 transition-colors truncate">
                     {chapter.title}
                   </h3>
+                  {chapter.description && (
+                    <p className="text-xs text-slate-500 mt-1 leading-5">
+                      {chapter.description}
+                    </p>
+                  )}
                   {chapter.key_topics.length > 0 && (
                     <p className="text-xs text-slate-400 mt-0.5 truncate">
                       {chapter.key_topics.join(' / ')}
@@ -480,6 +553,66 @@ export default function TextbookPage() {
                 <span className={`text-xs w-14 text-right flex-shrink-0 ${cfg.color}`}>
                   {cfg.label}
                 </span>
+                </div>
+
+                <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50/80 p-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                      Chapter Guidance
+                    </h4>
+                    {editingChapterId !== chapter.id && (
+                      <button
+                        onClick={() => startEditingGuidance(chapter)}
+                        className="text-xs font-medium text-blue-600 hover:text-blue-700 transition-colors"
+                      >
+                        编辑
+                      </button>
+                    )}
+                  </div>
+
+                  {editingChapterId === chapter.id ? (
+                    <div className="space-y-3">
+                      <textarea
+                        value={guidanceDrafts[chapter.id] ?? chapter.chapter_guidance ?? ''}
+                        onChange={(e) =>
+                          setGuidanceDrafts((prev) => ({
+                            ...prev,
+                            [chapter.id]: e.target.value,
+                          }))
+                        }
+                        rows={5}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm leading-6 text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent"
+                      />
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => saveGuidance(chapter.id)}
+                          disabled={savingGuidanceId === chapter.id}
+                          className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {savingGuidanceId === chapter.id ? '保存中...' : '保存'}
+                        </button>
+                        <button
+                          onClick={() => cancelEditingGuidance(chapter.id)}
+                          disabled={savingGuidanceId === chapter.id}
+                          className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600">
+                        {chapter.chapter_guidance || '当前还没有章节级指导，你可以先补充再生成本章内容。'}
+                      </p>
+                      {chapter.has_content && (
+                        <p className="text-xs text-amber-700">
+                          章节要求已更新后，需要手动重新生成本章，新的要求才会体现在内容里。
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )
           })}

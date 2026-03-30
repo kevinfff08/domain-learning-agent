@@ -26,6 +26,10 @@ class Chapter(BaseModel):
     chapter_number: int = Field(ge=1, description="1-based chapter number")
     title: str
     description: str = ""
+    chapter_guidance: str = Field(
+        default="",
+        description="Chapter-specific guidance derived from course-level requirements",
+    )
     difficulty: int = Field(default=3, ge=1, le=5)
     estimated_hours: float = Field(default=2.0, ge=0.5)
     status: ChapterStatus = ChapterStatus.PENDING
@@ -60,6 +64,10 @@ class Textbook(BaseModel):
 
     course_id: str
     field: str = Field(description="Target learning domain")
+    course_requirements: str = Field(
+        default="",
+        description="Course-level user requirements that influenced the textbook design",
+    )
     title: str = Field(description="Textbook title, e.g. '扩散模型：从理论到实践'")
     chapters: list[Chapter] = Field(default_factory=list)
     survey_papers: list[PaperReference] = Field(default_factory=list)

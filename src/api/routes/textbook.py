@@ -391,6 +391,31 @@ class ExportResponse(BaseModel):
     errors: dict[str, str] = Field(default_factory=dict)
 
 
+class UpdateChapterGuidanceRequest(BaseModel):
+    """Chapter guidance update body."""
+    chapter_guidance: str = ""
+
+
+@router.patch("/courses/{course_id}/chapters/{chapter_id}/guidance")
+def update_chapter_guidance(
+    course_id: str,
+    chapter_id: str,
+    req: UpdateChapterGuidanceRequest,
+    orch: LearningOrchestrator = Depends(get_orchestrator),
+):
+    """Update chapter-level guidance inside the textbook outline."""
+    try:
+        textbook = orch.update_chapter_guidance(
+            course_id,
+            chapter_id,
+            req.chapter_guidance,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+    return json.loads(textbook.model_dump_json())
+
+
 @router.post("/courses/{course_id}/export")
 async def export_materials(
     course_id: str,

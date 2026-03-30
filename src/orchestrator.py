@@ -122,6 +122,7 @@ class LearningOrchestrator:
             available_hours=assessment_data.get("available_hours", 10.0),
             learning_style=LearningStyle(assessment_data.get("learning_style", "intuition_first")),
         )
+        profile.course_requirements = assessment_data.get("course_requirements", "") or ""
 
         # Create course directory and save assessment
         self.store.ensure_course_dirs(course_id)
@@ -131,6 +132,7 @@ class LearningOrchestrator:
         course = Course(
             id=course_id,
             title=field,
+            description=profile.course_requirements,
             status=CourseStatus.CREATED,
             created_at=datetime.now(),
             updated_at=datetime.now(),
@@ -152,6 +154,42 @@ class LearningOrchestrator:
         """Load a course record."""
         return self.store.load_course_model(course_id, "course.json", Course)
 
+    def get_course_settings(self, course_id: str) -> dict:
+        """Return editable course settings for the create/edit form."""
+        course = self.get_course(course_id)
+        if not course:
+            raise ValueError(f"Course '{course_id}' not found")
+
+        profile = self.store.load_course_model(course_id, "assessment_profile.json", AssessmentProfile)
+        if not profile:
+            raise ValueError(f"No assessment profile for course '{course_id}'")
+
+        field_key = profile.target_field.lower().replace(" ", "_")
+        domain_level = profile.domain_knowledge.get(field_key)
+        if domain_level is None and profile.domain_knowledge:
+            domain_level = max(profile.domain_knowledge.values())
+
+        math_level = round(sum([
+            profile.math_foundations.linear_algebra.level,
+            profile.math_foundations.probability.level,
+            profile.math_foundations.calculus.level,
+        ]) / 3)
+        programming_level = round(sum([
+            profile.programming.python.level,
+            profile.programming.pytorch.level,
+        ]) / 2)
+
+        return {
+            "field": profile.target_field,
+            "course_requirements": profile.course_requirements,
+            "math_level": math_level,
+            "programming_level": programming_level,
+            "domain_level": domain_level or 0,
+            "learning_goal": profile.learning_goal.value,
+            "available_hours": profile.available_hours_per_week,
+            "learning_style": profile.learning_style.value,
+        }
+
     def delete_course(self, course_id: str) -> bool:
         """Delete a course and remove from registry."""
         success = self.store.delete_course(course_id)
@@ -160,6 +198,106 @@ class LearningOrchestrator:
             registry = [c for c in registry if c.get("id") != course_id]
             self.store.save_courses_registry(registry)
         return success
+
+    def update_course(
+        self,
+        course_id: str,
+        assessment_data: dict,
+    ) -> tuple[Course, AssessmentProfile]:
+        """Update course settings and reset derived textbook/content artifacts."""
+        course = self.get_course(course_id)
+        if not course:
+            raise ValueError(f"Course '{course_id}' not found")
+
+        previous_textbook = self.store.load_course_model(course_id, "textbook.json", Textbook)
+        field = assessment_data.get("field", course.title)
+
+        profile = self.assessor.quick_assess(
+            field,
+            math_level=assessment_data.get("math_level", 3),
+            programming_level=assessment_data.get("programming_level", 3),
+            domain_level=assessment_data.get("domain_level", 0),
+            learning_goal=LearningGoal(assessment_data.get("learning_goal", "understand_concepts")),
+            available_hours=assessment_data.get("available_hours", 10.0),
+            learning_style=LearningStyle(assessment_data.get("learning_style", "intuition_first")),
+        )
+        profile.course_requirements = assessment_data.get("course_requirements", "") or ""
+        self.store.save_course_model(course_id, "assessment_profile.json", profile)
+
+        self._reset_course_artifacts(course_id, previous_textbook)
+
+        course.title = field
+        course.description = profile.course_requirements
+        course.status = CourseStatus.CREATED
+        course.total_chapters = 0
+        course.completed_chapters = 0
+        course.updated_at = datetime.now()
+        self.store.save_course_model(course_id, "course.json", course)
+        self._update_registry(course)
+
+        return course, profile
+
+    def update_chapter_guidance(
+        self,
+        course_id: str,
+        chapter_id: str,
+        chapter_guidance: str,
+    ) -> Textbook:
+        """Update chapter-specific guidance within a textbook outline."""
+        textbook = self.store.load_course_model(course_id, "textbook.json", Textbook)
+        if not textbook:
+            raise ValueError(f"No textbook for course '{course_id}'")
+
+        chapter = textbook.get_chapter(chapter_id)
+        if not chapter:
+            raise ValueError(f"Chapter '{chapter_id}' not found")
+
+        chapter.chapter_guidance = chapter_guidance.strip()
+        textbook.updated_at = datetime.now()
+        self.store.save_course_model(course_id, "textbook.json", textbook)
+        return textbook
+
+    def _reset_course_artifacts(
+        self,
+        course_id: str,
+        previous_textbook: Textbook | None,
+    ) -> None:
+        """Remove derived outline/content artifacts before rebuilding a course."""
+        course_dir = self.store.get_course_dir(course_id)
+        chapter_ids = [chapter.id for chapter in previous_textbook.chapters] if previous_textbook else []
+
+        for relative_path in ["textbook.json", "progress.json"]:
+            target = course_dir / relative_path
+            if target.exists():
+                target.unlink()
+
+        for dirname in ["content", "cards", "quizzes"]:
+            target = course_dir / dirname
+            if target.exists():
+                import shutil
+                shutil.rmtree(target)
+
+        self.store.ensure_course_dirs(course_id)
+
+        if chapter_ids:
+            progress = self.store.load_progress(LearnerProgress)
+            if progress:
+                changed = False
+                for chapter_id in chapter_ids:
+                    if chapter_id in progress.concepts:
+                        del progress.concepts[chapter_id]
+                        changed = True
+                if changed:
+                    progress.updated_at = datetime.now()
+                    self.store.save_progress(progress)
+
+            data_dir = self.store.data_dir
+            for chapter_id in chapter_ids:
+                for relative_dir in ["content", "cards", "quizzes"]:
+                    legacy_dir = data_dir / relative_dir / chapter_id
+                    if legacy_dir.exists():
+                        import shutil
+                        shutil.rmtree(legacy_dir)
 
     # ── Assessment ───────────────────────────────────────────────────
 
