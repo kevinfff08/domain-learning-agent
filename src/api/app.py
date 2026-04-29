@@ -80,7 +80,7 @@ def _recover_interrupted_chapters() -> None:
 app = FastAPI(
     title="NewLearner API",
     description="PhD-level AI research domain learning system",
-    version="0.2.5",
+    version="0.2.6",
     lifespan=lifespan,
 )
 

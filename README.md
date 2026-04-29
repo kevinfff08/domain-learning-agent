@@ -22,7 +22,7 @@ PhD 级 AI 研究领域自学系统。输入一个研究领域，系统自动搜
 |---|---|
 | 后端 | Python 3.14, FastAPI, Pydantic v2, SSE |
 | 前端 | React, TypeScript, Vite, Tailwind CSS |
-| LLM | Anthropic Claude API / OpenAI API |
+| LLM | Anthropic Claude API / OpenAI API / DeepSeek API |
 | 资料搜索 | Tavily (主, 网络搜索), OpenAlex + arXiv (学术论文 fallback) |
 | 间隔重复 | FSRS-6 算法 |
 
@@ -74,6 +74,15 @@ OPENAI_API_KEY=sk-proj-...
 LLM_MODEL=gpt-4.1
 ```
 
+DeepSeek official API:
+
+```env
+LLM_PROVIDER=deepseek
+LLM_MODE=api-key
+DEEPSEEK_API_KEY=sk-...
+LLM_MODEL=deepseek-v4-flash
+```
+
 **Mode B: Setup Token（Claude 订阅用户）**
 
 通过 [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) 代理请求：
@@ -84,18 +93,25 @@ LLM_MODE=setup-token
 LLM_PROXY_URL=http://localhost:8317
 ```
 
+说明：DeepSeek 当前在本项目中只支持官方 `api-key` 直连，不走 `setup-token` 代理模式。
+
 ### 所有 `.env` 字段
 
 | 变量 | 必需 | 说明 |
 |------|------|------|
+| `LLM_PROVIDER` | 否 | `anthropic`、`openai`、`deepseek`；不填则按 `LLM_MODEL` 自动推断 |
 | `LLM_MODE` | 否 | `api-key`（默认）或 `setup-token` |
 | `ANTHROPIC_API_KEY` | api-key 模式 | 从 [console.anthropic.com](https://console.anthropic.com) 获取 |
+| `OPENAI_API_KEY` | openai 的 api-key 模式 | 从 [platform.openai.com](https://platform.openai.com/api-keys) 获取 |
+| `DEEPSEEK_API_KEY` | deepseek 的 api-key 模式 | 从 [platform.deepseek.com](https://platform.deepseek.com) 获取 |
+| `OPENAI_BASE_URL` | 否 | OpenAI 兼容直连接口地址覆盖 |
+| `DEEPSEEK_BASE_URL` | 否 | DeepSeek 兼容直连接口地址覆盖；默认 `https://api.deepseek.com/v1` |
 | `LLM_PROXY_URL` | 否 | setup-token 模式的代理地址（默认 `http://localhost:8317`） |
 | `TAVILY_API_KEY` | 否 | 网络搜索（教程/博客/论文），从 [tavily.com](https://tavily.com) 获取，免费 1000 次/月 |
 | `SEMANTIC_SCHOLAR_API_KEY` | 否 | 提高论文搜索速率限制 |
 | `GITHUB_TOKEN` | 否 | 仓库质量指标 |
 | `LLM_MODEL` | 否 | 覆盖默认模型（默认 `claude-sonnet-4-20250514`） |
-| `LLM_MAX_TOKENS` | 否 | 覆盖最大输出 token 数（默认按模型：Opus 32000, Sonnet 16000） |
+| `LLM_MAX_TOKENS` | 否 | 覆盖最大输出 token 数；项目默认值保持保守，不会直接使用供应商文档中的最大上下文/输出上限 |
 | `LLM_MAX_CONTINUATIONS` | 否 | 输出截断时最大自动续写次数（默认 `3`） |
 | `VERIFICATION_ENABLED` | 否 | 启用/关闭准确性验证步骤（默认 `true`，设为 `false` 跳过） |
 | `VERIFICATION_MODEL` | 否 | 验证步骤使用的模型（默认同 `LLM_MODEL`，可设为更便宜的模型） |

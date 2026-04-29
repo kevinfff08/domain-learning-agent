@@ -176,6 +176,7 @@ def status():
     table.add_row("LLM_PROVIDER", os.environ.get("LLM_PROVIDER", "auto"))
     table.add_row("ANTHROPIC_API_KEY", "Set" if os.environ.get("ANTHROPIC_API_KEY") else "Not set")
     table.add_row("OPENAI_API_KEY", "Set" if os.environ.get("OPENAI_API_KEY") else "Not set")
+    table.add_row("DEEPSEEK_API_KEY", "Set" if os.environ.get("DEEPSEEK_API_KEY") else "Not set")
     table.add_row("SEMANTIC_SCHOLAR_API_KEY", "Set" if os.environ.get("SEMANTIC_SCHOLAR_API_KEY") else "Not set (optional)")
     table.add_row("GITHUB_TOKEN", "Set" if os.environ.get("GITHUB_TOKEN") else "Not set (optional)")
     table.add_row("Data directory", str(Path("data").resolve()))

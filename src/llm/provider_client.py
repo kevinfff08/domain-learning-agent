@@ -32,7 +32,7 @@ except ImportError:  # pragma: no cover - optional until dependency is installed
     OpenAIBadRequestError = ()  # type: ignore[assignment]
 
 T = TypeVar("T", bound=BaseModel)
-LLMProvider = Literal["anthropic", "openai"]
+LLMProvider = Literal["anthropic", "openai", "deepseek"]
 LLMMode = Literal["api-key", "setup-token"]
 
 load_dotenv()
@@ -43,6 +43,8 @@ _MODEL_FAMILY_MAX_TOKENS: list[tuple[str, int]] = [
     ("claude-opus", 32000),
     ("claude-sonnet", 16000),
     ("claude-haiku", 8192),
+    # Keep DeepSeek conservative by default; users can opt in to higher budgets via LLM_MAX_TOKENS.
+    ("deepseek-", 8192),
     ("gpt-5", 8192),
     ("gpt-4.1", 8192),
     ("gpt-4o", 8192),
@@ -59,6 +61,8 @@ _OPENAI_MODEL_PREFIXES = (
     "codex-",
     "computer-use-preview",
 )
+_DEEPSEEK_MODEL_PREFIXES = ("deepseek-",)
+_DEEPSEEK_DEFAULT_BASE_URL = "https://api.deepseek.com/v1"
 
 
 def _resolve_int_env(name: str, default: int) -> int:
@@ -91,6 +95,11 @@ def _is_openai_model(model: str) -> bool:
     return model.startswith(_OPENAI_MODEL_PREFIXES)
 
 
+def _is_deepseek_model(model: str) -> bool:
+    """Best-effort detection for DeepSeek model names."""
+    return model.startswith(_DEEPSEEK_MODEL_PREFIXES)
+
+
 def resolve_llm_mode() -> LLMMode:
     """Resolve the configured LLM connection mode."""
     raw_mode = os.environ.get("LLM_MODE", "api-key").strip().lower()
@@ -106,17 +115,23 @@ def resolve_llm_provider(
 ) -> LLMProvider:
     """Resolve provider from explicit config, env, or model naming."""
     raw_provider = (provider or os.environ.get("LLM_PROVIDER", "")).strip().lower()
-    if raw_provider in ("anthropic", "openai"):
+    if raw_provider in ("anthropic", "openai", "deepseek"):
         return raw_provider  # type: ignore[return-value]
 
     candidate_model = (model or os.environ.get("LLM_MODEL", "")).strip().lower()
+    if candidate_model and _is_deepseek_model(candidate_model):
+        return "deepseek"
     if candidate_model and _is_openai_model(candidate_model):
         return "openai"
     return "anthropic"
 
 
 def _resolve_key_env_name(provider: LLMProvider) -> str:
-    return "OPENAI_API_KEY" if provider == "openai" else "ANTHROPIC_API_KEY"
+    if provider == "openai":
+        return "OPENAI_API_KEY"
+    if provider == "deepseek":
+        return "DEEPSEEK_API_KEY"
+    return "ANTHROPIC_API_KEY"
 
 
 def resolve_llm_api_key(
@@ -154,15 +169,28 @@ def resolve_llm_base_url(
     resolved_mode = resolve_llm_mode() if mode is None else mode.strip().lower()
 
     if base_url:
-        return _normalize_openai_base_url(base_url) if resolved_provider == "openai" else base_url
+        return (
+            _normalize_openai_base_url(base_url)
+            if resolved_provider in ("openai", "deepseek")
+            else base_url
+        )
 
     if resolved_mode == "setup-token":
+        if resolved_provider == "deepseek":
+            return None
         proxy_url = os.environ.get("LLM_PROXY_URL", "http://localhost:8317")
-        return _normalize_openai_base_url(proxy_url) if resolved_provider == "openai" else proxy_url
+        return (
+            _normalize_openai_base_url(proxy_url)
+            if resolved_provider == "openai"
+            else proxy_url
+        )
 
     if resolved_provider == "openai":
         configured = os.environ.get("OPENAI_BASE_URL", "").strip()
         return _normalize_openai_base_url(configured) if configured else None
+    if resolved_provider == "deepseek":
+        configured = os.environ.get("DEEPSEEK_BASE_URL", "").strip()
+        return _normalize_openai_base_url(configured) if configured else _DEEPSEEK_DEFAULT_BASE_URL
 
     return None
 
@@ -175,7 +203,7 @@ def is_llm_ready(
     """Return whether the configured LLM backend is ready to serve requests."""
     resolved_mode = resolve_llm_mode() if mode is None else mode.strip().lower()
     if resolved_mode == "setup-token":
-        return True
+        return resolve_llm_provider(model=model, provider=provider) != "deepseek"
 
     env_name = _resolve_key_env_name(resolve_llm_provider(model=model, provider=provider))
     return bool(os.environ.get(env_name))
@@ -379,7 +407,7 @@ class LLMClient:
         temperature: float,
         max_tokens: int,
     ) -> tuple[str, str, int, int]:
-        if self.provider == "openai":
+        if self.provider in ("openai", "deepseek"):
             return self._openai_collect(
                 messages=messages,
                 system=system,
@@ -477,6 +505,11 @@ class LLMClient:
             "messages": request_messages,
             "temperature": temperature,
         }
+        if self.provider == "deepseek":
+            return self.client.chat.completions.create(
+                **base_kwargs,
+                max_tokens=max_tokens,
+            )
 
         try:
             return self.client.chat.completions.create(
